@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/DermaLensLOGO.jpg" alt="DermaLens logo" width="160"></p>
+
 # DermaLens
 An Android skin disease detection app built with Jetpack Compose. DermaLens lets users scan their skin, track conditions over time, and find nearby dermatology clinics — developed as a Capstone Project at Tarlac State University, 2026.
 

@@ -42,3 +42,6 @@ training/*_colab_snippet.py
 # Local editor/tool state
 *.code-workspace
 .freebuff/
+
+# App test screenshots -- kept locally for the paper/defense, not in the repo
+/testing/
