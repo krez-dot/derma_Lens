@@ -22,7 +22,6 @@ data class AppSettings(
     val textSecondary get() = if (highContrast) Color(0xFF1a1a1a) else Color(0xFF6B7280)
     val background get() = Color(0xFFFFFFFF)
     val cardBg get() = if (highContrast) Color(0xFFF0F0F0) else Color(0xFFF9FAFB)
-    val borderColor get() = if (highContrast) Color(0xFF000000) else Color(0xFFE5E7EB)
 }
 
 val LocalAppSettings = compositionLocalOf { AppSettings() }
