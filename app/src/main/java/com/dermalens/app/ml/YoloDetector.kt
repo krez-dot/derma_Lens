@@ -259,7 +259,7 @@ private fun preprocess(bitmap: Bitmap, width: Int, height: Int, channelsFirst: B
     // Stretch-to-square, not letterboxed: tested both against this model and confidence was
     // roughly 5x higher with a stretch resize (~40% vs ~9%), which points to the training data
     // having been resized this same way -- likely Roboflow's "Resize: Stretch" preprocessing
-    // preset (HANDOFF.md notes a Kaggle/Roboflow dataset). Revisit if the final merged model
+    // preset (docs/HANDOFF.md notes a Kaggle/Roboflow dataset). Revisit if the final merged model
     // turns out to use different preprocessing.
     val resized = Bitmap.createScaledBitmap(bitmap, width, height, true)
     val buffer = ByteBuffer.allocateDirect(4 * width * height * 3).order(ByteOrder.nativeOrder())

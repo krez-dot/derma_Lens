@@ -24,10 +24,10 @@ abstract class DermaDatabase : RoomDatabase() {
                     "dermalens_database"
                 )
                     // Versions 1-6 were all pre-launch dev builds (no real user ever ran one, see
-                    // HANDOFF.md's DB Version History) -- destructively wiping those specific
+                    // docs/HANDOFF.md's DB Version History) -- destructively wiping those specific
                     // upgrades is fine. But blanket fallbackToDestructiveMigration() would also
                     // silently wipe every real user's data on the *next* schema bump after launch
-                    // (PRELAUNCH_AUDIT_2026-09-21.md #10). Scoping the fallback to only these
+                    // (docs/PRELAUNCH_AUDIT_2026-09-21.md #10). Scoping the fallback to only these
                     // known-dev versions means any future v7->v8+ bump without a real Migration
                     // throws IllegalStateException instead of quietly deleting everything -- a
                     // build-time-visible failure that forces a real migration to be written,

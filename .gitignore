@@ -32,6 +32,13 @@ app/google-services.json
 *.ipynb
 training/*_colab_snippet.py
 
-# Claude Code session-local state -- .claude/settings.json (repo-level config, e.g.
-# includeCoAuthoredBy) is intentionally NOT ignored and should be committed.
-.claude/scheduled_tasks.lock
+# Claude Code local config
+.claude/
+/.idea/deviceManager.xml
+/.idea/deploymentTargetSelector.xml
+/.idea/git_toolbox_prj.xml
+/.idea/misc.xml
+
+# Local editor/tool state
+*.code-workspace
+.freebuff/

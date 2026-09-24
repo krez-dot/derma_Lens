@@ -23,7 +23,7 @@ val googleWebClientId: String = localProperties.getProperty("GOOGLE_WEB_CLIENT_I
 
 // Room needs a schema history on disk to write and test real Migration objects (rather than
 // fallbackToDestructiveMigration) against -- see the schemaLocation-less warning this was added
-// to fix, and DermaDatabase.kt / PRELAUNCH_AUDIT_2026-09-21.md #10 for why that matters starting
+// to fix, and DermaDatabase.kt / docs/PRELAUNCH_AUDIT_2026-09-21.md #10 for why that matters starting
 // at the next version bump after launch.
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")

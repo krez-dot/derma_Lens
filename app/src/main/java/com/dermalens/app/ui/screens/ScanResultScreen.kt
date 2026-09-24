@@ -237,7 +237,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     // double-tap on "Save to Progress" could pass the `!isSaved` guard twice before the first
     // save resolved, launching two concurrent saves that both read the same stale
     // savedScanId==null and each insert their own new row instead of the second one updating
-    // the first (PRELAUNCH_AUDIT_2026-09-21.md #2). isSaving is set synchronously, before
+    // the first (docs/PRELAUNCH_AUDIT_2026-09-21.md #2). isSaving is set synchronously, before
     // launching the coroutine, so the second tap is blocked immediately rather than racing.
     var isSaving by remember { mutableStateOf(false) }
     var isContributed by remember { mutableStateOf(false) }
@@ -597,7 +597,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                                     // Was previously unhandled -- a DB insert failure (disk full,
                                     // constraint violation, I/O error) crashed the app instead of
                                     // showing an error on one of the most-used interactions in
-                                    // the app (PRELAUNCH_AUDIT_2026-09-21.md #3).
+                                    // the app (docs/PRELAUNCH_AUDIT_2026-09-21.md #3).
                                     android.widget.Toast.makeText(context, "Couldn't save this scan. Please try again.", android.widget.Toast.LENGTH_SHORT).show()
                                 } finally {
                                     isSaving = false

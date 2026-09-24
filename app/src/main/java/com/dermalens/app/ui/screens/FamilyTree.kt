@@ -43,7 +43,7 @@ data class FamilyTree(
 
 /**
  * Static reference trees for the app's 6 detectable conditions. Content, not a detection target --
- * see chat/HANDOFF.md: subtype-splitting Acne into a detector was tried and shelved (it hurt mAP,
+ * see docs/HANDOFF.md: subtype-splitting Acne into a detector was tried and shelved (it hurt mAP,
  * see training/acne_subtypes_future/README.md); this reuses that same clinical research as
  * education instead, which doesn't have that accuracy risk.
  *

@@ -367,7 +367,7 @@ fun ProfileScreen(navController: NavController) {
     if (showDeleteAccountDialog) {
         // Google-only accounts have no Firebase password credential -- EmailAuthProvider can't
         // reauthenticate them, so they confirm via a fresh Google credential instead. See
-        // PRELAUNCH_AUDIT_2026-09-21.md #1.
+        // docs/PRELAUNCH_AUDIT_2026-09-21.md #1.
         val isGoogleOnlyDelete = remember(showDeleteAccountDialog) {
             FirebaseAuth.getInstance().currentUser?.let { isGoogleOnlyAccount(it) } ?: false
         }
@@ -609,7 +609,7 @@ fun EditProfileScreen(navController: NavController) {
     var originalName by remember { mutableStateOf<String?>(null) }
     val hasChanges = originalName != null && (name.trim() != originalName || newPassword.isNotEmpty())
     // Google-only accounts have no Firebase password credential to reauthenticate or change --
-    // see PRELAUNCH_AUDIT_2026-09-21.md #1. The password fields below simply don't apply to them.
+    // see docs/PRELAUNCH_AUDIT_2026-09-21.md #1. The password fields below simply don't apply to them.
     val isGoogleOnly = remember { FirebaseAuth.getInstance().currentUser?.let { isGoogleOnlyAccount(it) } ?: false }
 
     val fieldColors = OutlinedTextFieldDefaults.colors(

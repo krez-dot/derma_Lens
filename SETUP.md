@@ -129,5 +129,5 @@ app/src/main/java/com/dermalens/app/
     └── DermaColors.kt / AppSettings.kt   # Theming, prefs, shared helpers
 ```
 
-See `HANDOFF.md` for a deeper walkthrough of what's built and how each feature works, and
-`FIREBASE_AUTH_PLAN.md` for what's currently in progress on this branch.
+See `docs/HANDOFF.md` for a deeper walkthrough of what's built and how each feature works, and
+`docs/FIREBASE_AUTH_PLAN.md` for what's currently in progress on this branch.

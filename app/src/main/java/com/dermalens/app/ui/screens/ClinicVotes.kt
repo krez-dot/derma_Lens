@@ -21,7 +21,7 @@ import kotlin.coroutines.resumeWithException
  * Deliberately NOT anonymous the way Contribute to Research's uploads are -- each vote is keyed
  * by the voter's Firebase UID so a single account can't stuff the tally, but only the aggregate
  * counts and the vote's own owner are ever readable (see the Firestore security rules this
- * needs, documented in HANDOFF.md). Writes go directly from the client via
+ * needs, documented in docs/HANDOFF.md). Writes go directly from the client via
  * FieldValue.increment() inside a transaction, no Cloud Functions involved, so this stays on
  * Firebase's free Spark plan -- the same billing constraint that pushed Contribute to Research
  * onto Apps Script instead of Firebase Storage (see that pipeline's README section).

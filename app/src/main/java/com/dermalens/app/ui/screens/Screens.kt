@@ -135,7 +135,7 @@ private suspend fun signInWithGoogle(context: android.content.Context): Firebase
  * Google only. EmailAuthProvider.getCredential(email, password) can't reauthenticate such an
  * account (there's no password on Firebase's side to check), so password-change and
  * account-deletion flows need to branch to [getGoogleAuthCredential] instead. See
- * PRELAUNCH_AUDIT_2026-09-21.md #1. */
+ * docs/PRELAUNCH_AUDIT_2026-09-21.md #1. */
 internal fun isGoogleOnlyAccount(user: FirebaseUser): Boolean =
     user.providerData.none { it.providerId == com.google.firebase.auth.EmailAuthProvider.PROVIDER_ID }
 
