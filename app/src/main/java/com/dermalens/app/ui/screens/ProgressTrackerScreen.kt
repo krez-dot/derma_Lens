@@ -35,7 +35,9 @@ import coil.compose.AsyncImage
 import com.dermalens.app.data.db.DermaDatabase
 import com.dermalens.app.navigation.Screen
 import com.dermalens.app.ui.LocalAppSettings
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class ScanEntry(val id: Int, val date: String, val confidence: Float, val notes: String, val imagePath: String = "")
 // trackGroupId identifies which specific occurrence/spot this card represents -- passed back to
@@ -70,6 +72,9 @@ fun ProgressTrackerScreen(navController: NavController) {
     var refreshKey by remember { mutableStateOf(0) }
     var totalScans by remember { mutableStateOf(0) }
     var daysTracked by remember { mutableStateOf(0) }
+    // Distinct conditions, not conditionTracks.size -- two separate Melasma timelines are still
+    // one condition (and Profile's own "Conditions" stat already counts it this way).
+    var conditionCount by remember { mutableStateOf(0) }
     var conditionTracks by remember { mutableStateOf(emptyList<ConditionTrack>()) }
 
     LaunchedEffect(refreshKey) {
@@ -78,9 +83,11 @@ fun ProgressTrackerScreen(navController: NavController) {
         if (user != null) {
             val scans = db.scanRecordDao().getScansByUserOnce(user.userId)
             totalScans = scans.size
-            if (scans.isNotEmpty()) {
+            conditionCount = scans.map { it.condition }.distinct().size
+            // Reset to 0 when empty -- otherwise deleting the last scan left the old value up.
+            daysTracked = if (scans.isEmpty()) 0 else {
                 val earliest = scans.minOf { it.scanDate }
-                daysTracked = ((System.currentTimeMillis() - earliest) / (1000L * 60L * 60L * 24L)).toInt() + 1
+                ((System.currentTimeMillis() - earliest) / (1000L * 60L * 60L * 24L)).toInt() + 1
             }
             // Grouped by trackGroupId, not condition -- two unrelated occurrences that happen to
             // classify the same (a wart on one finger, an unrelated new wart on a toe) get their
@@ -145,7 +152,7 @@ fun ProgressTrackerScreen(navController: NavController) {
                         Spacer(modifier = Modifier.height(16.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             StatCard("$totalScans", "Total Scans", Modifier.weight(1f))
-                            StatCard("${conditionTracks.size}", "Conditions", Modifier.weight(1f))
+                            StatCard("$conditionCount", "Conditions", Modifier.weight(1f))
                             StatCard("$daysTracked", "Days Tracked", Modifier.weight(1f))
                         }
                     }
@@ -227,6 +234,13 @@ fun ProgressTrackerScreen(navController: NavController) {
                             onScanAgain = { navController.navigate(Screen.Scan.createRoute(continueTrackGroupId = track.trackGroupId)) { launchSingleTop = true } },
                             onDeleteScan = { scanId ->
                                 scope.launch {
+                                    // The dialog promises the scan is permanently removed, so the
+                                    // saved skin photo goes too -- deleting only the row used to
+                                    // leave every deleted scan's image behind in scan_photos/.
+                                    val imagePath = db.scanRecordDao().getScanById(scanId)?.imagePath.orEmpty()
+                                    if (imagePath.isNotEmpty()) {
+                                        withContext(Dispatchers.IO) { java.io.File(imagePath).delete() }
+                                    }
                                     db.scanRecordDao().deleteScan(scanId)
                                     refreshKey++
                                 }

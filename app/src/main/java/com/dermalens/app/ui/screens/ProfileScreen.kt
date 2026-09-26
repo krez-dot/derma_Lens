@@ -432,6 +432,11 @@ fun ProfileScreen(navController: NavController) {
                                     firebaseUser.reauthenticate(credential).awaitTask()
                                 }
 
+                                // Firebase first, local data after: delete() is the step that can
+                                // fail (network drop, stale session), and if it ran last a failure
+                                // left the account alive with its scans and photos already wiped.
+                                firebaseUser.delete().awaitTask()
+
                                 val db = DermaDatabase.getDatabase(context)
                                 val user = db.userDao().getUserByEmail(savedEmail)
                                 if (user != null) {
@@ -445,8 +450,6 @@ fun ProfileScreen(navController: NavController) {
                                     }
                                     db.userDao().deleteUserById(user.userId)
                                 }
-
-                                firebaseUser.delete().awaitTask()
 
                                 prefs.edit()
                                     .putBoolean(DermaPrefs.KEY_IS_LOGGED_IN, false)

@@ -32,6 +32,7 @@ import androidx.navigation.NavController
 import com.dermalens.app.navigation.Screen
 import com.dermalens.app.ui.LocalAppSettings
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
 import com.dermalens.app.data.db.DermaDatabase
 import com.dermalens.app.data.model.ScanRecord
@@ -232,7 +233,10 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     // Already true/set when viewing history -- this scan is, by definition, already saved, and
     // reusing its real id keeps any further action (e.g. Contribute to Research, tapped later
     // than the original save) updating this same row instead of inserting a duplicate.
-    var isSaved by remember { mutableStateOf(isHistoryView) }
+    // rememberSaveable, not remember: navigating to another screen (e.g. Find Nearby Clinic) and
+    // back disposes this composition, and plain remember would come back reset -- re-enabling
+    // "Save to Progress" with savedScanId forgotten, so a second tap inserted a duplicate row.
+    var isSaved by rememberSaveable { mutableStateOf(isHistoryView) }
     // isSaved only flips to true *after* the async saveScan() call returns, so a rapid
     // double-tap on "Save to Progress" could pass the `!isSaved` guard twice before the first
     // save resolved, launching two concurrent saves that both read the same stale
@@ -240,8 +244,8 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     // the first (docs/PRELAUNCH_AUDIT_2026-09-21.md #2). isSaving is set synchronously, before
     // launching the coroutine, so the second tap is blocked immediately rather than racing.
     var isSaving by remember { mutableStateOf(false) }
-    var isContributed by remember { mutableStateOf(false) }
-    var savedScanId by remember { mutableStateOf(if (isHistoryView) scanId else null) }
+    var isContributed by rememberSaveable { mutableStateOf(false) }
+    var savedScanId by rememberSaveable { mutableStateOf(if (isHistoryView) scanId else null) }
 
     LaunchedEffect(scanId) {
         if (isHistoryView) {
@@ -258,7 +262,9 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     // Shown once, the first time a low-confidence result loads -- the inline "No Clear Condition
     // Detected" card below still renders underneath, so dismissing the dialog (rather than
     // retaking) still leaves the user somewhere useful instead of a dead end.
-    var showLowConfidenceDialog by remember { mutableStateOf(result.isLowConfidence) }
+    // Saveable for the same reason as isSaved: otherwise it re-pops every time the user comes
+    // back to this screen from another one.
+    var showLowConfidenceDialog by rememberSaveable { mutableStateOf(result.isLowConfidence) }
     // Set true only when Save to Progress actually also triggered a research upload (contribute
     // toggle on + image copy succeeded) -- not on every save, since most saves don't contribute.
     var showContributionDialog by remember { mutableStateOf(false) }
@@ -328,32 +334,56 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     }
 
     if (showLowConfidenceDialog) {
+        // Analysis Unavailable is an app-side failure, not a photo problem -- it used to fall
+        // through to the "Low Confidence" wording and offer Retake Photo, contradicting its own
+        // result card ("retaking it probably won't help").
+        val analysisFailed = result.condition == "Analysis Unavailable"
         AlertDialog(
             onDismissRequest = { showLowConfidenceDialog = false },
             icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFF6B7280)) },
-            title = { Text(if (result.condition == "Image Too Unclear to Analyze") "Image Too Unclear" else "Low Confidence", fontWeight = FontWeight.Bold) },
+            title = {
+                Text(
+                    when {
+                        analysisFailed -> "Analysis Unavailable"
+                        result.condition == "Image Too Unclear to Analyze" -> "Image Too Unclear"
+                        else -> "Low Confidence"
+                    },
+                    fontWeight = FontWeight.Bold
+                )
+            },
             text = {
                 Text(
-                    if (result.condition == "Image Too Unclear to Analyze")
-                        "This photo doesn't have enough visible detail to analyze -- it may be too dark, out of " +
-                            "focus, or the lens may have been obstructed. Retake in bright, even lighting with a " +
-                            "clean, unobstructed lens."
-                    else
-                        "The scan didn't clearly match any condition this app recognizes. This can happen if the " +
-                            "photo isn't of skin, is blurry or poorly lit, or doesn't clearly show an affected area. " +
-                            "For the most reliable result, retake the photo in good lighting with the affected area " +
-                            "filling the frame.",
+                    when {
+                        analysisFailed ->
+                            "This scan couldn't be analyzed on this device. This is a problem with the app, not " +
+                                "your photo, so no result was produced. Try closing and reopening the app."
+                        result.condition == "Image Too Unclear to Analyze" ->
+                            "This photo doesn't have enough visible detail to analyze -- it may be too dark, out of " +
+                                "focus, or the lens may have been obstructed. Retake in bright, even lighting with a " +
+                                "clean, unobstructed lens."
+                        else ->
+                            "The scan didn't clearly match any condition this app recognizes. This can happen if the " +
+                                "photo isn't of skin, is blurry or poorly lit, or doesn't clearly show an affected area. " +
+                                "For the most reliable result, retake the photo in good lighting with the affected area " +
+                                "filling the frame."
+                    },
                     fontSize = settings.textMd.sp
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    showLowConfidenceDialog = false
-                    navController.navigate(Screen.Scan.createRoute()) { popUpTo(Screen.Scan.route) { inclusive = true } }
-                }) { Text("Retake Photo") }
+                if (analysisFailed) {
+                    TextButton(onClick = { showLowConfidenceDialog = false }) { Text("OK") }
+                } else {
+                    TextButton(onClick = {
+                        showLowConfidenceDialog = false
+                        navController.navigate(Screen.Scan.createRoute()) { popUpTo(Screen.Scan.route) { inclusive = true } }
+                    }) { Text("Retake Photo") }
+                }
             },
             dismissButton = {
-                TextButton(onClick = { showLowConfidenceDialog = false }) { Text("View Details") }
+                if (!analysisFailed) {
+                    TextButton(onClick = { showLowConfidenceDialog = false }) { Text("View Details") }
+                }
             }
         )
     }
@@ -575,54 +605,61 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                Button(
-                    onClick = {
-                        // Guard set synchronously, before launch -- see isSaving's declaration
-                        // above for why this can't wait until the coroutine actually runs.
-                        if (!isSaved && !isSaving) {
-                            isSaving = true
-                            scope.launch {
-                                try {
-                                    // contribute = false here, deliberately -- saving to history
-                                    // must never silently also upload the image. Whether to
-                                    // contribute is asked right after, as its own explicit
-                                    // yes/no prompt, so consent is real rather than a side
-                                    // effect of tapping this button.
-                                    savedScanId = saveScan(context, result, imageUri, savedScanId, contribute = false, continueTrackGroupId = continueTrackGroupId.takeIf { it != -1 })
-                                    isSaved = true
-                                    if (contributionFeatureEnabled && !isContributed) {
-                                        showContributePrompt = true
+                // Only a real detection can be saved. No Clear Condition / Image Too Unclear /
+                // Analysis Unavailable aren't diagnoses: saving one used to create a Progress
+                // entry that reopened as "Analysis Unavailable" (the history view only knows the
+                // six real conditions), counted as a "condition" in Profile, and -- with research
+                // contribution on -- offered to upload a non-skin or failed photo to the dataset.
+                if (!result.isLowConfidence) {
+                    Button(
+                        onClick = {
+                            // Guard set synchronously, before launch -- see isSaving's declaration
+                            // above for why this can't wait until the coroutine actually runs.
+                            if (!isSaved && !isSaving) {
+                                isSaving = true
+                                scope.launch {
+                                    try {
+                                        // contribute = false here, deliberately -- saving to history
+                                        // must never silently also upload the image. Whether to
+                                        // contribute is asked right after, as its own explicit
+                                        // yes/no prompt, so consent is real rather than a side
+                                        // effect of tapping this button.
+                                        savedScanId = saveScan(context, result, imageUri, savedScanId, contribute = false, continueTrackGroupId = continueTrackGroupId.takeIf { it != -1 })
+                                        isSaved = true
+                                        if (contributionFeatureEnabled && !isContributed) {
+                                            showContributePrompt = true
+                                        }
+                                    } catch (e: Exception) {
+                                        // Was previously unhandled -- a DB insert failure (disk full,
+                                        // constraint violation, I/O error) crashed the app instead of
+                                        // showing an error on one of the most-used interactions in
+                                        // the app (docs/PRELAUNCH_AUDIT_2026-09-21.md #3).
+                                        android.widget.Toast.makeText(context, "Couldn't save this scan. Please try again.", android.widget.Toast.LENGTH_SHORT).show()
+                                    } finally {
+                                        isSaving = false
                                     }
-                                } catch (e: Exception) {
-                                    // Was previously unhandled -- a DB insert failure (disk full,
-                                    // constraint violation, I/O error) crashed the app instead of
-                                    // showing an error on one of the most-used interactions in
-                                    // the app (docs/PRELAUNCH_AUDIT_2026-09-21.md #3).
-                                    android.widget.Toast.makeText(context, "Couldn't save this scan. Please try again.", android.widget.Toast.LENGTH_SHORT).show()
-                                } finally {
-                                    isSaving = false
                                 }
                             }
+                        },
+                        enabled = !isSaving,
+                        modifier = Modifier.fillMaxWidth().height(52.dp).semantics { contentDescription = if (isSaved) "Scan saved to Progress" else "Save scan to Progress" },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = if (isSaved) Color(0xFF16A34A) else Color(0xFF0284C7))
+                    ) {
+                        if (isSaving) {
+                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(if (isSaved) Icons.Default.Check else Icons.Default.BookmarkAdd, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                         }
-                    },
-                    enabled = !isSaving,
-                    modifier = Modifier.fillMaxWidth().height(52.dp).semantics { contentDescription = if (isSaved) "Scan saved to Progress" else "Save scan to Progress" },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = if (isSaved) Color(0xFF16A34A) else Color(0xFF0284C7))
-                ) {
-                    if (isSaving) {
-                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(if (isSaved) Icons.Default.Check else Icons.Default.BookmarkAdd, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        // Was "Save to History" -- renamed to match the one consistent name the rest
+                        // of the app now uses for this same feature (bottom nav tab, Home's card,
+                        // Profile's menu item, the screen's own header all say "Progress").
+                        Text(if (isSaved) "Saved to Progress!" else if (isSaving) "Saving..." else "Save to Progress", fontSize = settings.textLg.sp, fontWeight = FontWeight.SemiBold)
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    // Was "Save to History" -- renamed to match the one consistent name the rest
-                    // of the app now uses for this same feature (bottom nav tab, Home's card,
-                    // Profile's menu item, the screen's own header all say "Progress").
-                    Text(if (isSaved) "Saved to Progress!" else if (isSaving) "Saving..." else "Save to Progress", fontSize = settings.textLg.sp, fontWeight = FontWeight.SemiBold)
-                }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
 
                 OutlinedButton(
                     onClick = { navController.navigate(Screen.Scan.createRoute()) { popUpTo(Screen.Scan.route) { inclusive = true } } },
