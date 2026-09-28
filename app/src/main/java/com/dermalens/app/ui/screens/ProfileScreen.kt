@@ -31,6 +31,7 @@ import com.dermalens.app.navigation.Screen
 import com.dermalens.app.ui.LocalAppSettings
 import androidx.compose.runtime.LaunchedEffect
 import com.dermalens.app.data.db.DermaDatabase
+import com.dermalens.app.data.sync.ScanHistorySync
 import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
@@ -74,6 +75,9 @@ fun ProfileScreen(navController: NavController) {
     var highContrast by remember { mutableStateOf(prefs.getBoolean(DermaPrefs.KEY_HIGH_CONTRAST, false)) }
     var contributeData by remember { mutableStateOf(prefs.getBoolean(DermaPrefs.KEY_CONTRIBUTE_DATA, false)) }
     var notificationsEnabled by remember { mutableStateOf(prefs.getBoolean(DermaPrefs.KEY_NOTIFICATIONS_ENABLED, true)) }
+    var backupEnabled by remember { mutableStateOf(ScanHistorySync.isEnabled(context)) }
+    var showBackupOnDialog by remember { mutableStateOf(false) }
+    var showBackupOffDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         val savedEmail = prefs.getString(DermaPrefs.KEY_USER_EMAIL, "") ?: ""
@@ -189,6 +193,13 @@ fun ProfileScreen(navController: NavController) {
                         prefs.edit().putBoolean(DermaPrefs.KEY_CONTRIBUTE_DATA, false).apply()
                         com.dermalens.app.worker.ContributionUploadScheduler.cancelUpload(context)
                     }
+                })
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFCCCCCC) else Color(0xFFF3F4F6))
+                // Opt-in only, behind its own consent dialog: scan records are health information
+                // (sensitive personal information under RA 10173), so they never leave the phone
+                // unless the user explicitly turns this on. Photos are never uploaded either way.
+                ProfileMenuItemSwitch(icon = Icons.Default.CloudUpload, iconBg = Color(0xFFEFF6FF), iconTint = Color(0xFF2563EB), title = "Back Up Scan History", subtitle = if (backupEnabled) "Records backed up (photos stay on this phone)" else "Keep your history if you switch phones", checked = backupEnabled, onCheckedChange = {
+                    if (it) showBackupOnDialog = true else showBackupOffDialog = true
                 })
             }
             } }
@@ -344,6 +355,8 @@ fun ProfileScreen(navController: NavController) {
                         // or a different account's session.
                         com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
                         context.getSharedPreferences(DermaPrefs.PREFS_NAME, android.content.Context.MODE_PRIVATE).edit().putBoolean(DermaPrefs.KEY_IS_LOGGED_IN, false).apply()
+                        // The next account on this phone learns its own backup choice at login.
+                        ScanHistorySync.clearLocalFlag(context)
                         navController.navigate(Screen.Login.route) { popUpTo(Screen.Home.route) { inclusive = true } }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
@@ -432,10 +445,16 @@ fun ProfileScreen(navController: NavController) {
                                     firebaseUser.reauthenticate(credential).awaitTask()
                                 }
 
+                                // Cloud backup first: it can only be removed while the account
+                                // still exists, and this throws (stopping here, account intact) if
+                                // the backup can't be deleted -- so no orphaned health records.
+                                ScanHistorySync.deleteAllCloudData(firebaseUser.uid)
+
                                 // Firebase first, local data after: delete() is the step that can
                                 // fail (network drop, stale session), and if it ran last a failure
                                 // left the account alive with its scans and photos already wiped.
                                 firebaseUser.delete().awaitTask()
+                                ScanHistorySync.clearLocalFlag(context)
 
                                 val db = DermaDatabase.getDatabase(context)
                                 val user = db.userDao().getUserByEmail(savedEmail)
@@ -525,6 +544,92 @@ fun ProfileScreen(navController: NavController) {
         )
     }
 
+    // Back Up Scan History -- consent dialog (turning ON)
+    if (showBackupOnDialog) {
+        AlertDialog(
+            onDismissRequest = { showBackupOnDialog = false },
+            icon = { Icon(Icons.Default.CloudUpload, contentDescription = null, tint = Color(0xFF2563EB)) },
+            title = { Text("Back Up Scan History?", fontWeight = FontWeight.Bold, fontSize = settings.textXl.sp, color = Color(0xFF111827)) },
+            text = {
+                Text(
+                    "Your scan records (detected condition, confidence, date, and your notes) will be copied to secure cloud storage (Google Firebase) linked to your account, so they come back if you log in on another phone.\n\n" +
+                        "Your photos are NOT uploaded. They stay only on the phone that took them.\n\n" +
+                        "This is health information. Only you can access it, and turning backup off deletes the cloud copy.",
+                    fontSize = settings.textMd.sp,
+                    color = Color(0xFF374151),
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showBackupOnDialog = false
+                        scope.launch {
+                            try {
+                                ScanHistorySync.enable(context)
+                                backupEnabled = true
+                                android.widget.Toast.makeText(context, "Scan history backup is on", android.widget.Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                android.widget.Toast.makeText(context, "Couldn't turn on backup. Please try again.", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                    shape = RoundedCornerShape(10.dp)
+                ) { Text("Back Up", fontSize = settings.textMd.sp) }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showBackupOnDialog = false }, shape = RoundedCornerShape(10.dp)) { Text("Not Now", fontSize = settings.textMd.sp) }
+            },
+            shape = RoundedCornerShape(16.dp),
+            containerColor = Color.White,
+            titleContentColor = Color(0xFF111827),
+            textContentColor = Color(0xFF374151)
+        )
+    }
+
+    // Back Up Scan History -- turning OFF deletes the cloud copy
+    if (showBackupOffDialog) {
+        AlertDialog(
+            onDismissRequest = { showBackupOffDialog = false },
+            icon = { Icon(Icons.Default.CloudOff, contentDescription = null, tint = Color(0xFFDC2626)) },
+            title = { Text("Turn Off Backup?", fontWeight = FontWeight.Bold, fontSize = settings.textXl.sp, color = Color(0xFF111827)) },
+            text = {
+                Text(
+                    "This deletes your scan history backup from the cloud. Scans already on this phone are kept.",
+                    fontSize = settings.textMd.sp,
+                    color = Color(0xFF374151),
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showBackupOffDialog = false
+                        scope.launch {
+                            try {
+                                ScanHistorySync.disable(context)
+                                backupEnabled = false
+                                android.widget.Toast.makeText(context, "Backup turned off and deleted", android.widget.Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                android.widget.Toast.makeText(context, "Couldn't reach the server. Check your internet and try again.", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                    shape = RoundedCornerShape(10.dp)
+                ) { Text("Turn Off", fontSize = settings.textMd.sp) }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showBackupOffDialog = false }, shape = RoundedCornerShape(10.dp)) { Text("Cancel", fontSize = settings.textMd.sp) }
+            },
+            shape = RoundedCornerShape(16.dp),
+            containerColor = Color.White,
+            titleContentColor = Color(0xFF111827),
+            textContentColor = Color(0xFF374151)
+        )
+    }
+
     // Privacy Policy Dialog
     if (showPrivacyDialog) {
         AlertDialog(
@@ -537,9 +642,9 @@ fun ProfileScreen(navController: NavController) {
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text("Effective Date: January 1, 2026", fontSize = settings.textSm.sp, color = Color(0xFF6B7280))
-                    PrivacySection("1. Information We Collect", "DermaLens collects the following data to provide its services:\n\n• Profile information you provide (full name, email address)\n• Skin scan results including detected condition, confidence score, and severity level\n• Scan history and timestamps stored locally on your device\n• Device location (GPS) used only to find nearby dermatology clinics")
+                    PrivacySection("1. Information We Collect", "DermaLens collects the following data to provide its services:\n\n• Profile information you provide (full name, email address)\n• Skin scan results including detected condition, confidence score, and severity level\n• Scan history and timestamps stored locally on your device (and, only if you turn on Back Up Scan History, in the cloud without photos)\n• Device location (GPS) used only to find nearby dermatology clinics")
                     PrivacySection("2. How We Use Your Data", "All data collected by DermaLens is used solely to:\n\n• Display your scan history and progress over time\n• Personalize your in-app experience\n• Help locate nearby dermatology clinics based on your location\n• Send optional daily skin care reminder notifications")
-                    PrivacySection("3. Data Storage", "All personal data and scan records are stored locally on your device using a secure Room database, including a saved copy of each scan's photo so you can review your progress over time. DermaLens does not transmit your personal information or scan images to any external server unless you separately opt in to Contribute to Research (see below).")
+                    PrivacySection("3. Data Storage", "All personal data and scan records are stored locally on your device using a secure Room database, including a saved copy of each scan's photo so you can review your progress over time. Your account's email address and verification status are managed by Google Firebase Authentication.\n\nIf you turn on Back Up Scan History (Profile > Account), your scan records (condition, confidence, severity, date, and notes) are also stored in Google Firebase, accessible only to your account, so they can be restored on another phone. Scan photos are never included in this backup. Turning backup off, or deleting your account, deletes the cloud copy.\n\nScan images leave your device only if you separately opt in to Contribute to Research, and then anonymously.")
                     PrivacySection("4. Camera & Gallery Access", "Camera and gallery access is used exclusively to capture or select skin images for AI analysis. Images are processed on-device and saved locally with your scan history. They are never shared with third parties, and are only uploaded if you opt in to Contribute to Research.")
                     PrivacySection("5. Location Access", "Location is accessed only when you use the Clinic Locator feature to find nearby dermatology clinics. Location data is not stored or logged.")
                     PrivacySection("6. AI Disclaimer", "DermaLens uses an on-device AI model (YOLOv11 TFLite) for skin condition detection. Results are for reference only and do not constitute medical advice. Always consult a dermatologist for diagnosis and treatment.")

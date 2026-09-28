@@ -1,10 +1,16 @@
 rules_version = '2';
 
-// Clinic Locator's crowd-sourced "still open?" votes (ClinicVotes.kt) are the only Firestore
-// data this app uses, so everything else is denied by default.
+// Firestore holds two things; everything else is denied by default:
 //
-// clinic_status/{placeId}              { confirmedOpenCount, confirmedClosedCount }
-// clinic_status/{placeId}/votes/{uid}  { vote: "open" | "closed", votedAt }
+// 1. Clinic Locator's crowd-sourced "still open?" votes (ClinicVotes.kt)
+//    clinic_status/{placeId}              { confirmedOpenCount, confirmedClosedCount }
+//    clinic_status/{placeId}/votes/{uid}  { vote: "open" | "closed", votedAt }
+//
+// 2. Opt-in scan history backup (data/sync/ScanHistorySync.kt) -- health records, so readable
+//    and writable ONLY by the account that owns them. Never photos.
+//    users/{uid}                    { syncEnabled, updatedAt }
+//    users/{uid}/scans/{scanDate}   { condition, confidence, severity, notes, scanDate,
+//                                     groupKey, deleted, updatedAt }   (tombstone: deleted=true)
 //
 // The counts are client-written (no Cloud Functions, to stay on the free Spark plan), so the
 // rules check that every count change exactly matches the caller's own vote change in the same
@@ -80,6 +86,40 @@ service cloud.firestore {
 
         allow delete: if signedIn() && request.auth.uid == uid
           && countsMatchMyVoteChange(placeId);
+      }
+    }
+
+    // ---- Scan history backup: owner-only, shape-checked ----
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    match /users/{uid} {
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['syncEnabled', 'updatedAt'])
+        && request.resource.data.syncEnabled is bool
+        && request.resource.data.updatedAt == request.time;
+
+      match /scans/{scanId} {
+        allow read, delete: if isOwner(uid);
+        // The doc id must be the scan's own timestamp (the cross-device key). A tombstone
+        // (deleted == true) may carry nothing but the timestamp -- no health data survives a delete.
+        allow create, update: if isOwner(uid)
+          && request.resource.data.scanDate is int
+          && scanId == string(request.resource.data.scanDate)
+          && request.resource.data.deleted is bool
+          && request.resource.data.updatedAt == request.time
+          && (request.resource.data.deleted == true
+                ? request.resource.data.keys().hasOnly(['scanDate', 'deleted', 'updatedAt'])
+                : (request.resource.data.keys().hasOnly(['condition', 'confidence', 'severity', 'notes',
+                                                          'scanDate', 'groupKey', 'deleted', 'updatedAt'])
+                   && request.resource.data.condition is string
+                   && request.resource.data.confidence is number
+                   && request.resource.data.severity is string
+                   && request.resource.data.notes is string
+                   && request.resource.data.notes.size() <= 2000
+                   && request.resource.data.groupKey is int));
       }
     }
   }

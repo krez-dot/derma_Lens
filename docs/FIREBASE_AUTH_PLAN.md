@@ -27,10 +27,39 @@ reset, and the authoritative user count (visible directly in the Firebase Consol
 code).
 
 **Everything else stays local, same as before:**
-- Scan history, condition tracking, progress data → Room DB, fully local, works offline.
+- Scan history, condition tracking, progress data → Room DB, fully local, works offline —
+  unless the user opts in to **Back Up Scan History** (below).
 - Care Guide, Skincare Guidance → unchanged, bundled locally.
-- Clinic Locator → unchanged, still OpenStreetMap/Overpass, still the only other feature
-  requiring internet.
+- Clinic Locator → Google Maps SDK + Places API (New) + Routes API (moved off
+  OpenStreetMap/Overpass in Sept 2026; see HANDOFF.md), requires internet.
+
+### Opt-in scan history backup (added 2026-09-28)
+
+Profile → Account → **Back Up Scan History** (off by default, behind a consent dialog). When on,
+scan *records* — condition, confidence, severity, date, notes, timeline grouping — are copied to
+Firestore under `users/{uid}/scans/{scanDate}` so they're restored when the same account logs in
+on another phone. **Photos are never uploaded** (cloud file storage needs the paid Blaze plan, and
+keeping skin photos off servers is the stronger privacy default). Code: `data/sync/ScanHistorySync.kt`.
+
+- Room stays the working copy; Firestore is the backup. Writes are fire-and-forget — Firestore's
+  built-in offline persistence queues them and sends them when back online (no WorkManager queue).
+- A scan's cross-device id is its `scanDate` (Room ids differ per phone); timelines travel as
+  `groupKey` = the timeline's first scan's `scanDate`.
+- Deleting a scan writes a **tombstone** (`deleted: true`, health fields dropped) so other phones
+  delete their copy instead of re-uploading it.
+- Home runs a two-way reconcile on open: learns the account's backup choice, applies tombstones,
+  restores missing records (without photos), pulls note edits, uploads local-only scans.
+- Turning backup off deletes the cloud copy (local scans kept). Delete Account deletes the cloud
+  copy **before** the Firebase account, and stops if that fails.
+- `firestore.rules`: `users/{uid}/**` is readable/writable only by that uid, shape-checked; the
+  rules must be published in the Firebase Console for this to work.
+- Verified on the emulator 2026-09-28: enable + backfill, restore on a wiped "new phone",
+  offline note edit queued and synced, delete propagated via tombstone (incl. the photo on the
+  other device), backup-off deleted the cloud copy.
+
+**Paper impact:** IC2 ("store all user data ... in a local Room DB") needs an opt-in carve-out;
+the in-app Privacy Policy (section 3) is already updated. Scan records are health information —
+sensitive personal information under RA 10173 — which is why this is opt-in with explicit consent.
 
 So the app now has one account type: a **registered account** (Firebase Auth) — email verified,
 persists in the cloud, counted in the Firebase Console. A local Room DB row still exists per

@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import com.dermalens.app.data.db.DermaDatabase
+import com.dermalens.app.data.sync.ScanHistorySync
 import com.dermalens.app.navigation.Screen
 import com.dermalens.app.ui.LocalAppSettings
 import kotlinx.coroutines.Dispatchers
@@ -237,17 +238,22 @@ fun ProgressTrackerScreen(navController: NavController) {
                                     // The dialog promises the scan is permanently removed, so the
                                     // saved skin photo goes too -- deleting only the row used to
                                     // leave every deleted scan's image behind in scan_photos/.
-                                    val imagePath = db.scanRecordDao().getScanById(scanId)?.imagePath.orEmpty()
+                                    val scan = db.scanRecordDao().getScanById(scanId)
+                                    val imagePath = scan?.imagePath.orEmpty()
                                     if (imagePath.isNotEmpty()) {
                                         withContext(Dispatchers.IO) { java.io.File(imagePath).delete() }
                                     }
                                     db.scanRecordDao().deleteScan(scanId)
+                                    // Backup on: tell the other phones this scan is gone (tombstone),
+                                    // so they don't restore or re-upload it.
+                                    scan?.let { ScanHistorySync.pushDelete(context, it.scanDate) }
                                     refreshKey++
                                 }
                             },
                             onEditNote = { scanId, newNote ->
                                 scope.launch {
                                     db.scanRecordDao().updateNotes(scanId, newNote)
+                                    ScanHistorySync.pushNotes(context, scanId)
                                     refreshKey++
                                 }
                             },

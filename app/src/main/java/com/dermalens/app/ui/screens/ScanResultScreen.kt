@@ -176,6 +176,9 @@ private suspend fun saveScan(
     if (groupIdForInsert == null) {
         db.scanRecordDao().setTrackGroupId(id, id)
     }
+    // Opt-in cloud backup of the record (never the photo). Fire-and-forget: Firestore queues it
+    // while offline, so saving never waits on the network. No-op when backup is off.
+    db.scanRecordDao().getScanById(id)?.let { com.dermalens.app.data.sync.ScanHistorySync.pushScan(context, it) }
     return id
 }
 

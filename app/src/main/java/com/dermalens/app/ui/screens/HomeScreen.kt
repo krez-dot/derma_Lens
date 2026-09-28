@@ -154,6 +154,19 @@ fun HomeScreen(navController: NavController) {
         val user = db.userDao().getUserByEmail(savedEmail)
         userId = user?.userId
         firstName = user?.fullName?.trim()?.split(" ")?.firstOrNull() ?: ""
+        // Opt-in scan history backup: merge with the cloud copy (restores scans saved on another
+        // phone, applies deletions/edits made there). Silently skipped offline or when backup is
+        // off; the scan list below updates on its own since it observes Room.
+        if (user != null) {
+            val restored = com.dermalens.app.data.sync.ScanHistorySync.reconcile(context)
+            if (restored > 0) {
+                android.widget.Toast.makeText(
+                    context,
+                    "Restored $restored scan${if (restored == 1) "" else "s"} from your backup",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     LaunchedEffect(userId) {

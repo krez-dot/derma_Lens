@@ -197,6 +197,10 @@ object DermaPrefs {
     const val KEY_CONTRIBUTE_DATA = "contribute_data"
     const val KEY_NOTIFICATIONS_ENABLED = "notifications_enabled"
     const val KEY_HIDE_SCAN_CONDITIONS_INFO = "hide_scan_conditions_info"
+    // Local mirror of the signed-in account's "Back Up Scan History" choice. The source of truth
+    // is users/{uid}.syncEnabled in Firestore (so a second phone learns it at login); this copy
+    // just lets save/delete/edit paths check it without a network read. Cleared on logout.
+    const val KEY_SYNC_HISTORY = "sync_history"
 }
 
 /**
