@@ -323,7 +323,7 @@ fun LoginScreen(navController: NavController) {
                                         db.userDao().insertUser(
                                             User(
                                                 fullName = firebaseUser.email?.substringBefore("@") ?: "User",
-                                                email = email.trim(),
+                                                email = firebaseUser.email ?: email.trim().lowercase(),
                                                 passwordHash = "",
                                                 firebaseUid = firebaseUser.uid
                                             )
@@ -337,7 +337,9 @@ fun LoginScreen(navController: NavController) {
                                     prefs.edit().apply {
                                         if (rememberMe) putString(DermaPrefs.KEY_REMEMBER_EMAIL, email.trim()) else remove(DermaPrefs.KEY_REMEMBER_EMAIL)
                                         putBoolean(DermaPrefs.KEY_IS_LOGGED_IN, true)
-                                        putString(DermaPrefs.KEY_USER_EMAIL, email.trim())
+                                        // Firebase's canonical (lowercase) form, not the typed text --
+                                        // "x@gmail.coM" logs in fine but must match the profile row.
+                                        putString(DermaPrefs.KEY_USER_EMAIL, firebaseUser?.email ?: email.trim().lowercase())
                                         apply()
                                     }
                                     navController.navigate(Screen.Home.route) { popUpTo(Screen.Login.route) { inclusive = true } }
@@ -509,7 +511,7 @@ fun RegisterScreen(navController: NavController) {
                                         db.userDao().insertUser(
                                             User(
                                                 fullName = name.trim(),
-                                                email = email.trim(),
+                                                email = firebaseUser?.email ?: email.trim().lowercase(),
                                                 passwordHash = "",
                                                 firebaseUid = firebaseUser?.uid
                                             )
