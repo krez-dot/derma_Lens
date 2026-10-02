@@ -17,17 +17,16 @@ import java.nio.channels.FileChannel
 
 private const val MODEL_FILE_NAME = "best.tflite"
 
-// Second 6-class merge attempt (v2, completed naturally at epoch 49/150 via patience=25,
-// 2026-09-15) -- instance-aware oversampling (5c in merge_and_train_multiclass.ipynb) added on
-// top of the existing image-level balancing, after the v1 attempt's labels.jpg showed Acne at
-// ~12 boxes/image vs Tinea/Melasma's ~1/image. Real improvement over v1 on every class but one:
-// Acne 0.499 (v1 0.481, solo 0.536), Eczema 0.674 (v1 0.649, solo 0.735), Melasma 0.569 (v1
-// 0.569, unchanged -- the one class the fix didn't move), Tinea 0.828 (v1 0.742, solo ~0.86-0.90
-// -- now close to parity), Warts 0.658 (v1 0.641, solo ~0.6+ -- now roughly at parity), Scabies
-// 0.698 (v1 0.684, solo 0.701 -- now roughly at parity). Overall mAP50=0.654 (v1 0.628).
-// Confusion matrix shows the v1 cross-condition misfires (e.g. Acne read as Scabies) are largely
-// gone -- off-diagonal confusion between real conditions tops out at 0.09; the dominant failure
-// mode now is missed detections, not wrong-condition guesses. Order matches training order.
+// Bundled model (2026-10-02): the v2 6-class merge (multiclass_merged_v2, mAP50 0.654) fine-tuned
+// for 22 epochs with 491 background photos that have no boxes -- faces, healthy skin close-ups,
+// outdoor scenes (training/finetune_v2_background.ipynb, run multiclass_v2_ft_background). v2 had
+// never seen a "nothing here" photo, so it always named something: faces read as Melasma, trees
+// as Warts. Image-level accuracy with this file's decision logic, on test photos neither model
+// trained on (v2 -> this model): overall 82.7% -> 89.5% (392 photos); Acne 69.6 -> 87.5, Eczema
+// 89.4 -> 96.0, Warts 77.8 -> 85.2, Scabies 85.9 -> 93.8, Melasma 88.9 -> 77.8 and Tinea 72.7 ->
+// 63.6 (2 photos each of 18/22); false alarms on 497 unseen scenes 31.4% -> 1.4%. Known limit:
+// clinical-style scabies (inflamed, infant soles/palms) still reads as Eczema; a second fine-tune
+// with more scabies data (round 2) scored worse and was not shipped. Order matches training order.
 private val CLASS_LABELS = listOf("Acne Vulgaris", "Eczema", "Melasma", "Tinea", "Warts", "Scabies")
 
 private val conditionTemplates: Map<String, DetectionResult> by lazy {

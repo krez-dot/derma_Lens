@@ -1,8 +1,8 @@
 # DermaLens — Developer Handoff
 
-Last updated: 2026-09-16
+Last updated: 2026-10-03
 Branch: `master`
-Status: Firebase Auth live. **Multi-class merge is done (v2)** — a real 6-class YOLOv11 model (overall mAP50 0.654) is trained, bundled, and live-verified on-device, including confirming that the specific cross-condition misfire from the v1 attempt (a real acne photo scored as Scabies) is fixed. Contribute to Research now actually uploads to Google Drive. Clinic Locator moved from OSM/Overpass to Google Maps + Places.
+Status: Firebase Auth live. **Multi-class merge is done (v2), and the bundled model is now v2 fine-tuned with background photos** (2026-10-02): image-level accuracy 82.7% → 89.5% on 392 held-out test photos, false alarms on unseen non-skin scenes 31.4% → 1.4% — see "Fine-tuned with background photos" below. The v1 cross-condition misfire (a real acne photo scored as Scabies) stays fixed. Contribute to Research now actually uploads to Google Drive. Clinic Locator moved from OSM/Overpass to Google Maps + Places.
 
 ---
 
@@ -34,7 +34,22 @@ Status: Firebase Auth live. **Multi-class merge is done (v2)** — a real 6-clas
 
 This is the **second** merge attempt (`RUN_NAME = "multiclass_merged_v2"`). The first (v1, interrupted at epoch 79/250) scored an overall mAP50 of 0.628 but regressed on *every single class* versus its own solo model, and live-testing surfaced a real cross-condition misfire — a genuine acne photo scored as Scabies at 52.3%. v2 fixed that.
 
-### Per-class results (overall mAP50 0.654, up from v1's 0.628)
+### Fine-tuned with background photos — the bundled model since 2026-10-02
+v2 had never seen a photo with nothing in it, so it always named a condition: faces read as Melasma, trees and bushes as Warts (up to 83%), and Eczema was the most common wrong answer. Fix: continue training v2 (not from scratch) for 22 epochs with **491 background photos that have no boxes** — faces, healthy skin close-ups, outdoor scenes (Roboflow `project-cp1-2e1ry/bg-ac2ai` v2). Same 6 datasets and balancing as v2. Notebook `training/finetune_v2_background.ipynb` (gitignored, like all notebooks), run `multiclass_v2_ft_background`; weights on Drive under `DermaLens_Models/dermalens_runs/multiclass_v2_ft_background/weights/`.
+
+Measured with the app's exact decision logic (stretch to 640, per-class max over boxes, argmax, 0.30 floor) on test photos neither model trained on:
+
+| | v2 | Bundled (fine-tuned) |
+|---|---|---|
+| Overall accuracy (392 condition photos) | 82.7% | **89.5%** |
+| Acne / Eczema / Warts / Scabies | 69.6 / 89.4 / 77.8 / 85.9% | **87.5 / 96.0 / 85.2 / 93.8%** |
+| Melasma / Tinea | 88.9 / 72.7% | 77.8 / 63.6% (−2 photos each, of 18 / 22) |
+| Wrong condition named (of which "Eczema") | 26 (16) | **17 (9)** |
+| False alarms, 497 unseen outdoor scenes | 31.4% | **1.4%** |
+
+**Known limit:** clinical-style scabies (inflamed papules, infant soles/palms, atlas photos) still reads as Eczema — the Scabies training set is mostly pale close-ups. A second fine-tune that swapped Scabies to `chrisent-dayniel-tolentino/scabies-erb5y` v7 (+465 photos, mostly blurry smartphone hand photos) scored **worse** (overall 84.5% → 79.2%, Scabies 71.4% → 54.3% on its harder test) and was not shipped. Plain skin close-ups can still be flagged (Melasma/Tinea) — the remaining ~8% background false alarms.
+
+### v2 per-class results (overall mAP50 0.654, up from v1's 0.628)
 
 | Condition | v2 AP50 | v1 AP50 | Solo baseline |
 |---|---|---|---|

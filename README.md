@@ -127,7 +127,9 @@ The Profile toggle isn't decorative — consented scans genuinely leave the devi
 > If `APPS_SCRIPT_URL` is blank the worker exits cleanly as a no-op, so the app builds and runs fine without any of this configured.
 
 ## AI Model — Training & Evaluation
-**Current model (v2):** YOLOv11-small, TFLite export, real 6-class merged model, **overall mAP50 0.654**, live-verified on-device.
+**Current model:** YOLOv11-medium, TFLite export — the 6-class merged model (v2, overall mAP50 0.654) **fine-tuned with 491 "nothing here" background photos** (2026-10-02). On 392 held-out test photos, using the app's own decision logic, accuracy went from 82.7% to **89.5%**, and false alarms on unseen non-skin scenes dropped from 31.4% to **1.4%**. Known limit: clinical-style scabies (inflamed, infant soles/palms) still tends to read as Eczema. Full breakdown in `docs/HANDOFF.md`.
+
+v2's box-level results, before the fine-tune:
 
 | Condition | v2 AP50 | Solo baseline |
 |---|---|---|
@@ -154,7 +156,7 @@ The Profile toggle isn't decorative — consented scans genuinely leave the devi
 - **Preprocessing mismatch, found and fixed.** Two of six source datasets (Melasma, Scabies) were exported with Roboflow's "Fit within" (letterbox) resize while the other four used "Stretch to" — mismatched geometry within one merged dataset. Fixing both moved Scabies 0.297→0.360 and Melasma 0.572→0.602.
 - **Scabies annotation issue, identified but not yet fixed.** The v1 confusion matrix showed Scabies wasn't confused with other conditions — it was simply missed (62% predicted as background). Rendering the actual boxes found why: 34% of source images have a single whole-image box (90–100% of frame) over photos containing 6–15 discrete lesions, contradicting the other 66% that are correctly boxed per-lesion. 114 affected images are identified and still pending re-annotation.
 - **v2 fix: instance-aware oversampling.** On top of the existing image-level balancing, a second pass tops up under-represented classes by real box-*instance* count, not just image count. Result: overall mAP50 0.654 (table above), and the v1 cross-condition misfire is gone (0.09 off-diagonal ceiling vs. it being the dominant failure mode before).
-- **Explored but not shipped:** a `yolo11m` (medium) solo Melasma run scored 0.696 mAP50 vs. 0.602 for `yolo11s` on the same data — a real capacity lever for the smaller classes, but not yet retrained into the full merge (latency cost on-device not yet benchmarked). A more heavily-augmented Acne dataset was solo-tested as a candidate fix for Acne's gap and scored statistically identical (0.534 vs. 0.536) — ruled out; Acne's ceiling looks like an inherent small-numerous-lesion difficulty, not a fixable data-quality problem. A standalone 5-class acne subtype model (blackhead/whitehead/papula/pustula/nodules) scored only 0.234 mAP50 with blackhead recall at 1.5%, so subtype differentiation is parked — see `training/acne_subtypes_future/README.md`.
+- **Model size:** a `yolo11m` (medium) solo Melasma run scored 0.696 mAP50 vs. 0.602 for `yolo11s` on the same data, so the merge is trained on `yolo11m` (`BASE_MODEL` in the merge notebook; the bundled 80.5 MB float32 `.tflite` matches yolo11m's ~20M parameters). A more heavily-augmented Acne dataset was solo-tested as a candidate fix for Acne's gap and scored statistically identical (0.534 vs. 0.536) — ruled out; Acne's ceiling looks like an inherent small-numerous-lesion difficulty, not a fixable data-quality problem. A standalone 5-class acne subtype model (blackhead/whitehead/papula/pustula/nodules) scored only 0.234 mAP50 with blackhead recall at 1.5%, so subtype differentiation is parked — see `training/acne_subtypes_future/README.md`.
 
 </details>
 
@@ -164,7 +166,7 @@ The Profile toggle isn't decorative — consented scans genuinely leave the devi
 | Feature | Is it real? |
 |---|---|
 | Clinic Locator | Real — Google Map + live Google Places results + OSRM routes; shows an honest empty state if none found nearby |
-| Skin Scan Results | Real, with a caveat — a trained 6-class model (v2, mAP50 0.654) is live-verified on-device, but the `.tflite` is gitignored, so a **fresh clone falls back to random mock results** until you drop the model into `app/src/main/assets/best.tflite` |
+| Skin Scan Results | Real, with a caveat — a trained 6-class model (v2 fine-tuned with background photos, 89.5% image-level accuracy on held-out test photos) is live-verified on-device, but the `.tflite` is gitignored, so a **fresh clone falls back to random mock results** until you drop the model into `app/src/main/assets/best.tflite` |
 | Progress Tracker | Real — pulls actual scan history from Room DB, grouped by condition with trend indicators; every scan keeps its own photo and an editable note |
 | Contribute to Research | Real — uploads to Drive via Apps Script, Wi-Fi only, anonymous; no-ops cleanly if unconfigured |
 | Scan Reminders | Real — the Profile toggle persists and enables/disables the daily reminder worker; a "Test Notification" button fires a real one-time notification (~5s later) to confirm the feature works without a full day's wait |

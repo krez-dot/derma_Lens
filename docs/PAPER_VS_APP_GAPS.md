@@ -18,6 +18,13 @@ meaningfully behind its solo result (0.696) and didn't move between the two merg
 worth another pass before calling this fully finished, but it does classify correctly, just with
 lower confidence headroom than the other five conditions.
 
+**Update 2026-10-02:** the bundled model is now v2 **fine-tuned with 491 background photos** (no
+boxes). Image-level accuracy on 392 held-out test photos 82.7% → 89.5%; false alarms on unseen
+non-skin scenes 31.4% → 1.4%; Melasma and Tinea each lost 2 test photos. For the paper: describe
+the fine-tune step in the methodology, report image-level accuracy alongside mAP, and state the
+known limitation that clinical-style scabies tends to be classified as Eczema. Numbers and method:
+`HANDOFF.md`, "Fine-tuned with background photos".
+
 The paper (Scope §1.4; Conceptual Framework §2.3) describes **one multi-class YOLOv11 model**
 trained on all six conditions simultaneously — "the model assigns it to one of the six
 pre-trained condition categories... not a binary (yes/no) detection, it is a multi-class
