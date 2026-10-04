@@ -347,7 +347,10 @@ fun CameraPreviewScreen(navController: NavController, continueTrackGroupId: Int 
                     )
                     .pointerInput(selectedImageUri) {
                         detectTransformGestures { _, pan, zoom, _ ->
-                            galleryScale = (galleryScale * zoom).coerceIn(1f, 5f)
+                            // Down to 0.5x so a whole photo can fit inside the guide frame (at 1x a
+                            // square photo is screen-wide and its edges fall outside the frame).
+                            // The crop clamps to the photo's bounds, so no black border is added.
+                            galleryScale = (galleryScale * zoom).coerceIn(0.5f, 5f)
                             galleryOffsetX += pan.x
                             galleryOffsetY += pan.y
                         }
