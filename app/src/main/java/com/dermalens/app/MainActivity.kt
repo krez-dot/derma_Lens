@@ -17,6 +17,7 @@ import com.dermalens.app.navigation.DermaLensNavGraph
 import com.dermalens.app.ui.AppSettings
 import com.dermalens.app.ui.LocalAppSettings
 import com.dermalens.app.ui.screens.DermaPrefs
+import com.dermalens.app.ui.screens.ContrastMode
 import com.dermalens.app.ui.theme.DermaLensTheme
 import com.dermalens.app.worker.ContributionUploadScheduler
 import com.dermalens.app.worker.NotificationScheduler
@@ -75,20 +76,34 @@ class MainActivity : ComponentActivity() {
             val prefs = remember { getSharedPreferences(DermaPrefs.PREFS_NAME, MODE_PRIVATE) }
 
             var fontScale by remember { mutableStateOf(prefs.getFloat(DermaPrefs.KEY_FONT_SIZE, 1.0f)) }
-            var highContrast by remember { mutableStateOf(prefs.getBoolean(DermaPrefs.KEY_HIGH_CONTRAST, false)) }
+            remember { ContrastMode.userSetting = prefs.getBoolean(DermaPrefs.KEY_HIGH_CONTRAST, false) }
+
+            // Android 14+ has a system-wide contrast level (Settings > Accessibility > Color and
+            // motion). Treat medium-or-higher as High Contrast, and keep following it live.
+            DisposableEffect(Unit) {
+                if (android.os.Build.VERSION.SDK_INT >= 34) {
+                    val uiModeManager = getSystemService(android.app.UiModeManager::class.java)
+                    ContrastMode.systemHigh = uiModeManager.contrast >= 0.5f
+                    val contrastListener = android.app.UiModeManager.ContrastChangeListener { level ->
+                        ContrastMode.systemHigh = level >= 0.5f
+                    }
+                    uiModeManager.addContrastChangeListener(mainExecutor, contrastListener)
+                    onDispose { uiModeManager.removeContrastChangeListener(contrastListener) }
+                } else onDispose { }
+            }
 
             DisposableEffect(Unit) {
                 val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
                     when (key) {
                         DermaPrefs.KEY_FONT_SIZE -> fontScale = prefs.getFloat(DermaPrefs.KEY_FONT_SIZE, 1.0f)
-                        DermaPrefs.KEY_HIGH_CONTRAST -> highContrast = prefs.getBoolean(DermaPrefs.KEY_HIGH_CONTRAST, false)
+                        DermaPrefs.KEY_HIGH_CONTRAST -> ContrastMode.userSetting = prefs.getBoolean(DermaPrefs.KEY_HIGH_CONTRAST, false)
                     }
                 }
                 prefs.registerOnSharedPreferenceChangeListener(listener)
                 onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
             }
 
-            val appSettings = AppSettings(fontScale = fontScale, highContrast = highContrast)
+            val appSettings = AppSettings(fontScale = fontScale, highContrast = ContrastMode.highContrast)
 
             CompositionLocalProvider(LocalAppSettings provides appSettings) {
                 DermaLensTheme {

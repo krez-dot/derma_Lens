@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.dermalens.app.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
@@ -10,11 +12,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -43,6 +50,17 @@ import com.dermalens.app.ml.runYoloInference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
+
+/** Where each condition usually shows up, shown under the condition name on the result screen. */
+val conditionUsualArea = mapOf(
+    "Acne Vulgaris" to "Usually on the face, chest, or back",
+    "Eczema" to "Often in skin folds like elbows and knees",
+    "Melasma" to "Usually on the cheeks and forehead",
+    "Tinea" to "Can appear almost anywhere on the body",
+    "Warts" to "Can appear anywhere, often hands and feet",
+    "Scabies" to "Often between fingers and on wrists"
+)
 
 /** A detection box normalized to [0,1] relative to the analyzed image, left/top/right/bottom. */
 data class NormalizedBox(val left: Float, val top: Float, val right: Float, val bottom: Float)
@@ -89,11 +107,11 @@ val mockDetectionResults = listOf(
     DetectionResult("Papular Acne", 90.4f, "Moderate", "Papules are small, inflamed acne bumps that form when a clogged pore's walls break down, causing redness and mild swelling without visible pus.", listOf("Small red, raised bumps", "Tender to touch", "No visible pus", "Can be widespread or localized"), "Use benzoyl peroxide or topical retinoids to reduce inflammation. Avoid picking to prevent scarring. Consult a dermatologist if papules are widespread or persistent.", Color(0xFFE53935), distinguishingFeature = "Small, firm, red bumps without a visible white or yellow center — inflamed but not yet pus-filled."),
     DetectionResult("Pustular Acne", 91.8f, "Moderate", "Pustules are inflamed acne lesions filled with pus, appearing as red bumps with a white or yellow center. They form when the body's immune response to clogged, infected pores intensifies.", listOf("Red bumps with white or yellow center", "Tender or painful", "Pus-filled", "Common on face, chest, or back"), "Use benzoyl peroxide or prescribed topical/oral antibiotics. Avoid squeezing, which can spread infection and cause scarring. Consult a dermatologist for persistent or widespread pustules.", Color(0xFFFF7043), distinguishingFeature = "Red, inflamed bumps with a distinct white or yellow pus-filled center, unlike the solid red bumps of papules."),
     DetectionResult("Nodular Acne", 89.7f, "Severe", "Nodules are large, firm, and often painful lumps that form deep under the skin when clogged, inflamed pores damage surrounding tissue. This is a more severe form of acne that can lead to scarring.", listOf("Large, firm lumps under the skin", "Painful to touch", "Deep-seated, not surface-level", "Can persist for weeks"), "Seek dermatologist care — nodular acne often requires prescription oral medication and is prone to scarring if untreated. Avoid picking or squeezing.", Color(0xFFB71C1C), distinguishingFeature = "Large, firm, painful lumps deep under the skin, unlike the smaller surface-level bumps of other acne types."),
-    DetectionResult("Eczema", 87.6f, "Mild", "Eczema (atopic dermatitis) is a condition that makes your skin red and itchy. It is common in children but can occur at any age.", listOf("Dry skin", "Itching", "Red patches", "Skin flaking"), "Keep skin moisturized. Avoid known triggers. Consult a dermatologist for topical treatments.", Color(0xFFFF9800), distinguishingFeature = "Diffuse dry, itchy, red patches with no sharp border, often in skin folds like elbows and knees."),
+    DetectionResult("Eczema", 87.6f, "Mild", "Eczema is a condition that makes your skin red and itchy. It is common in children but can occur at any age.", listOf("Dry skin", "Itching", "Red patches", "Skin flaking"), "Keep skin moisturized. Avoid known triggers. Consult a dermatologist for topical treatments.", Color(0xFFFF9800), distinguishingFeature = "Diffuse dry, itchy, red patches with no sharp border, often in skin folds like elbows and knees."),
     DetectionResult("Melasma", 91.2f, "Mild", "Melasma is a skin condition presenting as brown or blue-gray patches, usually on the face. It is associated with hormonal changes and sun exposure.", listOf("Brown patches", "Facial discoloration", "Symmetrical patches"), "Use broad-spectrum sunscreen daily. Avoid sun exposure. Consult a dermatologist for treatment options.", Color(0xFF795548), distinguishingFeature = "Flat, symmetrical brown patches on sun-exposed areas like the cheeks and forehead — no itching or raised texture."),
     DetectionResult("Tinea", 89.5f, "Moderate", "Tinea is a fungal infection of the skin. It can affect different parts of the body and is usually characterized by a ring-shaped rash.", listOf("Ring-shaped rash", "Itching", "Scaly skin", "Redness"), "Use antifungal cream as prescribed. Keep skin dry and clean. Consult a dermatologist.", Color(0xFF4CAF50), distinguishingFeature = "A distinct ring-shaped patch with a raised, scaly border and a clearer center, spreading outward."),
     DetectionResult("Warts", 96.1f, "Mild", "Warts are small growths caused by the human papillomavirus (HPV). They can appear anywhere on the body and are usually harmless.", listOf("Small flesh-colored bumps", "Rough texture", "Black dots"), "Avoid touching or scratching warts. Consult a dermatologist for removal options.", Color(0xFF9C27B0), distinguishingFeature = "Small, rough-textured, flesh-colored bumps, sometimes with tiny black dots — usually not itchy or red."),
-    DetectionResult("Scabies", 88.4f, "Severe", "Scabies is an itchy skin condition caused by a tiny burrowing mite. The intense itching associated with scabies is an allergic reaction to the mite.", listOf("Intense itching", "Thin burrow tracks", "Rash", "Sores"), "Seek immediate medical attention. Treatment requires prescription medication. Wash all clothing and bedding.", Color(0xFFF44336), distinguishingFeature = "Intense itching that's worse at night, with thin thread-like burrow tracks, often between fingers or on wrists.")
+    DetectionResult("Scabies", 88.4f, "Severe", "Scabies is an itchy skin condition caused by a tiny burrowing mite. The intense itching associated with scabies is an allergic reaction to the mite.", listOf("Intense itching", "Thin burrow tracks", "Rash", "Sores"), "Seek immediate medical attention. Treatment requires prescription medication. Wash all clothing and bedding.", Color(0xFF1E88E5), distinguishingFeature = "Intense itching that's worse at night, with thin thread-like burrow tracks, often between fingers or on wrists.")
 )
 
 /**
@@ -165,6 +183,10 @@ private suspend fun saveScan(
             confidence = result.confidence,
             severity = result.severity,
             notes = notes,
+            // Keep the original time on a re-save (Save, then "Yes, contribute"). It's also the
+            // scan's backup key, so a fresh timestamp left an orphaned cloud entry behind that
+            // the next sync "restored" as a photo-less duplicate.
+            scanDate = existingRecord?.scanDate ?: System.currentTimeMillis(),
             imagePath = savedImagePath,
             contributedForTraining = contribute && savedImagePath.isNotEmpty(),
             trackGroupId = groupIdForInsert
@@ -220,13 +242,13 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
-                    .background(if (settings.highContrast) Color.White else Color(0xFFF8F9FA)),
+                    .background(DermaPageBackground),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(color = DermaGreen)
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text("Analyzing your scan...", fontSize = settings.textMd.sp, color = Color(0xFF6B7280))
+                    Text("Analyzing your scan...", fontSize = settings.textMd.sp, color = DermaSubtle)
                 }
             }
         }
@@ -250,9 +272,13 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     var isContributed by rememberSaveable { mutableStateOf(false) }
     var savedScanId by rememberSaveable { mutableStateOf(if (isHistoryView) scanId else null) }
 
+    // When the scan was taken: the saved record's date in history view, or "now" for a fresh scan.
+    var scanDate by remember { mutableStateOf<Long?>(if (isHistoryView) null else System.currentTimeMillis()) }
     LaunchedEffect(scanId) {
         if (isHistoryView) {
-            isContributed = DermaDatabase.getDatabase(context).scanRecordDao().getScanById(scanId)?.contributedForTraining ?: false
+            val record = DermaDatabase.getDatabase(context).scanRecordDao().getScanById(scanId)
+            isContributed = record?.contributedForTraining ?: false
+            scanDate = record?.scanDate
         }
     }
     // Read once, at composable entry, purely to decide whether the Contribute button shows at
@@ -288,7 +314,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     LaunchedEffect(Unit) { revealed = true }
 
     if (showContributePrompt) {
-        AlertDialog(
+        DermaAlertDialog(
             onDismissRequest = { showContributePrompt = false },
             icon = { Icon(Icons.Default.CloudUpload, contentDescription = null, tint = DermaGreen) },
             title = { Text("Contribute to Research?", fontWeight = FontWeight.Bold) },
@@ -302,7 +328,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
+                Button(onClick = {
                     showContributePrompt = false
                     scope.launch {
                         savedScanId = saveScan(context, result, imageUri, savedScanId, contribute = true, continueTrackGroupId = continueTrackGroupId.takeIf { it != -1 })
@@ -319,7 +345,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     }
 
     if (showContributionDialog) {
-        AlertDialog(
+        DermaAlertDialog(
             onDismissRequest = { showContributionDialog = false },
             icon = { Icon(Icons.Default.CloudUpload, contentDescription = null, tint = DermaGreen) },
             title = { Text("Thank You!", fontWeight = FontWeight.Bold) },
@@ -331,7 +357,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                 )
             },
             confirmButton = {
-                TextButton(onClick = { showContributionDialog = false }) { Text("OK") }
+                Button(onClick = { showContributionDialog = false }) { Text("OK") }
             }
         )
     }
@@ -341,9 +367,9 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
         // through to the "Low Confidence" wording and offer Retake Photo, contradicting its own
         // result card ("retaking it probably won't help").
         val analysisFailed = result.condition == "Analysis Unavailable"
-        AlertDialog(
+        DermaAlertDialog(
             onDismissRequest = { showLowConfidenceDialog = false },
-            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFF6B7280)) },
+            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = DermaSubtle) },
             title = {
                 Text(
                     when {
@@ -375,7 +401,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
             },
             confirmButton = {
                 if (analysisFailed) {
-                    TextButton(onClick = { showLowConfidenceDialog = false }) { Text("OK") }
+                    Button(onClick = { showLowConfidenceDialog = false }) { Text("OK") }
                 } else {
                     TextButton(onClick = {
                         showLowConfidenceDialog = false
@@ -391,15 +417,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
         )
     }
 
-    Scaffold(
-        topBar = {
-            DermaGlassTopBar(
-                title = "Scan Result",
-                onBack = { navController.navigate(Screen.Home.route) { popUpTo(Screen.Home.route) { inclusive = false } } },
-                titleColor = Color(0xFF111827)
-            )
-        }
-    ) { innerPadding ->
+    Scaffold(containerColor = DermaPageBackground) { innerPadding ->
         AnimatedVisibility(
             visible = revealed,
             enter = fadeIn(tween(420)) + scaleIn(tween(420), initialScale = 0.94f)
@@ -408,129 +426,168 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(if (settings.highContrast) Color.White else Color(0xFFF8F9FA))
                 .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
         ) {
-            // Detection Banner
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Header: round back button + large title
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RoundIconButton(
+                    icon = Icons.Default.ArrowBack,
+                    contentDescription = "Go back",
+                    onClick = { navController.navigate(Screen.Home.route) { popUpTo(Screen.Home.route) { inclusive = false } } }
+                )
+                Spacer(modifier = Modifier.width(14.dp))
+                Column {
+                    Eyebrow("Scan result")
+                    Text("Your skin result", fontSize = settings.textTitle.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp, color = settings.textPrimary)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Photo with the detection boxes
+            val photoShape = RoundedCornerShape(28.dp)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Brush.verticalGradient(colors = listOf(result.color.copy(alpha = 0.9f), result.color)))
-                    .padding(24.dp)
-                    .semantics { contentDescription = if (result.isLowConfidence) "Detected condition: ${result.condition}" else "Detected condition: ${result.condition}, ${result.confidence}% confidence" }
+                    .aspectRatio(imageAspectRatio.coerceIn(0.75f, 1.6f))
+                    .shadow(14.dp, photoShape, ambientColor = Color(0x334C1D95), spotColor = Color(0x334C1D95))
+                    .then(if (settings.highContrast) Modifier.border(1.dp, HcBorder, photoShape) else Modifier)
+                    .clip(photoShape)
+                    .background(Color(0xFFEDE9FE))
+                    .semantics { contentDescription = if (result.isLowConfidence) "Detected condition: ${result.condition}" else "Detected condition: ${result.condition}, ${result.confidence}% confidence" },
+                contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(0.85f)
-                            .aspectRatio(imageAspectRatio)
-                            .clip(RoundedCornerShape(20.dp))
-                            .border(1.5.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(20.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (imageUri != null) {
-                            AsyncImage(
-                                // A plain string model, not Uri.parse(imageUri) -- a fresh scan's
-                                // imageUri is a real content://.../file:// URI (needs no help),
-                                // but a historical scan (scanId != -1) passes a bare absolute
-                                // file path with no scheme, which Uri.parse would hand to Coil
-                                // un-resolvable. Coil's String overload correctly detects and
-                                // loads both cases on its own.
-                                model = imageUri,
-                                contentDescription = "Scanned image",
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Fit,
-                                onSuccess = { state ->
-                                    val w = state.result.drawable.intrinsicWidth
-                                    val h = state.result.drawable.intrinsicHeight
-                                    if (w > 0 && h > 0) imageAspectRatio = w.toFloat() / h.toFloat()
-                                }
-                            )
-                            if (result.boundingBoxes.isNotEmpty()) {
-                                Canvas(modifier = Modifier.fillMaxSize().semantics { contentDescription = "${result.boundingBoxes.size} detected area(s) highlighted on scanned image" }) {
-                                    result.boundingBoxes.forEach { box ->
-                                        val left = box.left * size.width
-                                        val top = box.top * size.height
-                                        val right = box.right * size.width
-                                        val bottom = box.bottom * size.height
-                                        drawRect(
-                                            color = Color.White,
-                                            topLeft = Offset(left, top),
-                                            size = Size((right - left).coerceAtLeast(0f), (bottom - top).coerceAtLeast(0f)),
-                                            style = Stroke(width = 3.dp.toPx())
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            Box(modifier = Modifier.fillMaxSize().background(Color.White.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(Icons.Default.ImageSearch, contentDescription = "Scan image placeholder", tint = Color.White, modifier = Modifier.size(40.dp))
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text("Scan Image", fontSize = settings.textSm.sp, color = Color.White.copy(alpha = 0.8f))
-                                }
+                if (imageUri != null) {
+                    AsyncImage(
+                        // A plain string model, not Uri.parse(imageUri) -- a fresh scan's
+                        // imageUri is a real content://.../file:// URI (needs no help),
+                        // but a historical scan (scanId != -1) passes a bare absolute
+                        // file path with no scheme, which Uri.parse would hand to Coil
+                        // un-resolvable. Coil's String overload correctly detects and
+                        // loads both cases on its own.
+                        model = imageUri,
+                        contentDescription = "Scanned image",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit,
+                        onSuccess = { state ->
+                            val w = state.result.drawable.intrinsicWidth
+                            val h = state.result.drawable.intrinsicHeight
+                            if (w > 0 && h > 0) imageAspectRatio = w.toFloat() / h.toFloat()
+                        }
+                    )
+                    if (result.boundingBoxes.isNotEmpty()) {
+                        val boxColor = Color.White
+                        Canvas(modifier = Modifier.fillMaxSize().semantics { contentDescription = "${result.boundingBoxes.size} detected area(s) highlighted on scanned image" }) {
+                            result.boundingBoxes.forEach { box ->
+                                val left = box.left * size.width
+                                val top = box.top * size.height
+                                val right = box.right * size.width
+                                val bottom = box.bottom * size.height
+                                drawRoundRect(
+                                    color = boxColor,
+                                    topLeft = Offset(left, top),
+                                    size = Size((right - left).coerceAtLeast(0f), (bottom - top).coerceAtLeast(0f)),
+                                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(10.dp.toPx()),
+                                    style = Stroke(width = 3.dp.toPx())
+                                )
                             }
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(result.condition, fontSize = settings.textTitle.sp, fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center)
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    if (!result.isLowConfidence) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Row(
-                                modifier = Modifier.background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(20.dp)).padding(horizontal = 12.dp, vertical = 6.dp).semantics { contentDescription = "${result.confidence}% confidence" },
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.Verified, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("%.1f%%".format(result.confidence), color = Color.White, fontSize = settings.textBase.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.ImageSearch, contentDescription = "Scan image placeholder", tint = DermaGreen, modifier = Modifier.size(40.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text("No photo saved for this scan", fontSize = settings.textSm.sp, color = DermaGreenDark)
                     }
                 }
             }
 
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Condition + confidence ring
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (!result.isLowConfidence) {
+                            Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(result.color))
+                            Spacer(modifier = Modifier.width(10.dp))
+                        }
+                        Text(
+                            result.condition,
+                            fontSize = settings.textTitle.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = (-0.4).sp,
+                            lineHeight = (settings.textTitle * 1.15f).sp,
+                            color = settings.textPrimary
+                        )
+                    }
+                    conditionUsualArea[result.condition]?.takeIf { !result.isLowConfidence }?.let { area ->
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(area, fontSize = settings.textMd.sp, color = settings.textSecondary, modifier = Modifier.padding(start = 20.dp))
+                    }
+                }
+                if (!result.isLowConfidence) {
+                    Spacer(modifier = Modifier.width(12.dp))
+                    ConfidenceRing(percent = result.confidence)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Small facts as chips
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                scanDate?.let { date ->
+                    val fresh = !isHistoryView
+                    InfoChip(if (fresh) "Just now" else friendlyScanDate(date), Color.White, settings.textSecondary, icon = Icons.Outlined.Schedule)
+                }
+                if (result.isLowConfidence) {
+                    InfoChip("No clear match", Color(0xFFF3F4F6), Color(0xFF4B5563))
+                } else {
+                    val regions = result.boundingBoxes.size
+                    if (regions > 0) InfoChip("$regions region${if (regions == 1) "" else "s"} detected", Color.White, settings.textSecondary)
+                    if (isSaved) InfoChip("Saved to Progress", Color(0xFFDCFCE7), DermaSuccessText)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            DiagnosticAidDisclaimer()
             Spacer(modifier = Modifier.height(16.dp))
 
-            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                // About Card
-                ResultCard(icon = Icons.Default.Info, iconBg = DermaGreenLight, iconTint = DermaGreen, title = "About this condition") {
-                    Text(result.description, fontSize = settings.textMd.sp, color = Color(0xFF374151), lineHeight = 22.sp)
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                ResultCard(icon = Icons.Outlined.Info, iconBg = DermaGreenLight, iconTint = DermaGreen, title = "About this condition") {
+                    Text(result.description, fontSize = settings.textMd.sp, color = Color(0xFF374151), lineHeight = (settings.textMd * 1.55f).sp)
                 }
 
                 if (!result.isLowConfidence && familyTrees.containsKey(result.condition)) {
-                    Spacer(modifier = Modifier.height(12.dp))
-
                     // Family Tree Card -- static reference only, see FamilyTree.kt. Hidden on a
                     // low-confidence result since there's no confirmed condition to show a tree for.
                     ResultCard(icon = Icons.Default.AccountTree, iconBg = Color(0xFFF3E8FF), iconTint = DermaGreen, title = "Related Conditions") {
                         Text(
                             "See how ${result.condition} relates to similar-looking conditions and its own subtypes.",
-                            fontSize = settings.textSm.sp,
-                            color = Color(0xFF6B7280),
-                            lineHeight = 18.sp
+                            fontSize = settings.textBase.sp,
+                            color = settings.textSecondary,
+                            lineHeight = (settings.textBase * 1.5f).sp
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        OutlinedButton(
-                            onClick = { navController.navigate(Screen.FamilyTree.createRoute(result.condition)) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.AccountTree, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("View Family Tree")
-                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        PillButton(
+                            text = "View Family Tree",
+                            icon = Icons.Default.AccountTree,
+                            container = DermaGreenLight,
+                            content = DermaGreenDark,
+                            height = 46.dp,
+                            onClick = { navController.navigate(Screen.FamilyTree.createRoute(result.condition)) }
+                        )
                     }
                 }
-
-                Spacer(modifier = Modifier.height(12.dp))
 
                 // Symptoms Card -- for a low-confidence result, `result.symptoms` actually holds
                 // retake tips (see YoloDetector.kt's lowConfidenceResult), not real symptoms, so
                 // the heading needs to match what's actually listed underneath it.
                 ResultCard(
-                    icon = Icons.Default.List,
+                    icon = Icons.Default.AutoAwesome,
                     iconBg = Color(0xFFFEF3C7),
                     iconTint = Color(0xFFD97706),
                     title = if (result.isLowConfidence) "What You Can Try" else "Common Symptoms"
@@ -548,15 +605,13 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                 }
 
                 if (result.differentials.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(12.dp))
-
                     // Differential Diagnosis Card
-                    ResultCard(icon = Icons.Default.Rule, iconBg = Color(0xFFEFF6FF), iconTint = Color(0xFF2563EB), title = "Other Possibilities") {
+                    ResultCard(icon = Icons.Outlined.Visibility, iconBg = Color(0xFFEFF6FF), iconTint = Color(0xFF2563EB), title = "Other Possibilities") {
                         Text(
                             "The scan also picked up some resemblance to these conditions. A dermatologist should confirm which one it actually is.",
-                            fontSize = settings.textSm.sp,
-                            color = Color(0xFF6B7280),
-                            lineHeight = 18.sp
+                            fontSize = settings.textBase.sp,
+                            color = settings.textSecondary,
+                            lineHeight = (settings.textBase * 1.5f).sp
                         )
                         Spacer(modifier = Modifier.height(10.dp))
                         result.differentials.forEach { candidate ->
@@ -569,52 +624,44 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(candidate.condition, fontSize = settings.textMd.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1a1a1a))
+                                        Text(candidate.condition, fontSize = settings.textMd.sp, fontWeight = FontWeight.SemiBold, color = settings.textPrimary)
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        Text("%.1f%%".format(candidate.confidencePercent), fontSize = settings.textSm.sp, color = Color(0xFF6B7280))
+                                        Text("%.1f%%".format(candidate.confidencePercent), fontSize = settings.textSm.sp, color = settings.textSecondary)
                                     }
-                                    Text(candidate.distinguishingFeature, fontSize = settings.textSm.sp, color = Color(0xFF6B7280), lineHeight = 16.sp)
+                                    Text(candidate.distinguishingFeature, fontSize = settings.textSm.sp, color = settings.textSecondary, lineHeight = (settings.textSm * 1.45f).sp)
                                 }
                             }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Recommendation Card
-                ResultCard(icon = Icons.Default.Lightbulb, iconBg = DermaGreenLight, iconTint = DermaGreen, title = "Recommendation", bgColor = DermaGreenLight) {
-                    Text(result.recommendation, fontSize = settings.textMd.sp, color = DermaGreenDark, lineHeight = 22.sp)
+                ResultCard(icon = Icons.Outlined.Lightbulb, iconBg = Color.White, iconTint = DermaGreen, title = "Recommendation", bgColor = DermaGreenLight) {
+                    Text(result.recommendation, fontSize = settings.textMd.sp, color = DermaGreenDark, lineHeight = (settings.textMd * 1.55f).sp)
                 }
+            }
 
-                Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
-                // Disclaimer
-                DiagnosticAidDisclaimer()
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // Action Buttons
-                Button(
-                    onClick = { navController.navigate(Screen.ClinicLocator.route) },
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
-                ) {
-                    Icon(Icons.Default.LocationOn, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Find Nearby Clinic", fontSize = settings.textLg.sp, fontWeight = FontWeight.SemiBold)
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
+            // Action Buttons
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 // Only a real detection can be saved. No Clear Condition / Image Too Unclear /
                 // Analysis Unavailable aren't diagnoses: saving one used to create a Progress
                 // entry that reopened as "Analysis Unavailable" (the history view only knows the
                 // six real conditions), counted as a "condition" in Profile, and -- with research
                 // contribution on -- offered to upload a non-skin or failed photo to the dataset.
                 if (!result.isLowConfidence) {
-                    Button(
+                    PillButton(
+                        // Was "Save to History" -- renamed to match the one consistent name the rest
+                        // of the app now uses for this same feature (bottom nav tab, Home's card,
+                        // Profile's menu item, the screen's own header all say "Progress").
+                        text = if (isSaved) "Saved to Progress!" else if (isSaving) "Saving..." else "Save to Progress",
+                        icon = if (isSaved) Icons.Default.Check else Icons.Default.BookmarkAdd,
+                        loading = isSaving,
+                        container = if (isSaved) DermaSuccess else DermaGreen,
+                        content = Color.White,
+                        elevated = true,
+                        enabled = !isSaving,
+                        modifier = Modifier.semantics { contentDescription = if (isSaved) "Scan saved to Progress" else "Save scan to Progress" },
                         onClick = {
                             // Guard set synchronously, before launch -- see isSaving's declaration
                             // above for why this can't wait until the coroutine actually runs.
@@ -643,42 +690,82 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                                     }
                                 }
                             }
-                        },
-                        enabled = !isSaving,
-                        modifier = Modifier.fillMaxWidth().height(52.dp).semantics { contentDescription = if (isSaved) "Scan saved to Progress" else "Save scan to Progress" },
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = if (isSaved) Color(0xFF16A34A) else Color(0xFF0284C7))
-                    ) {
-                        if (isSaving) {
-                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(if (isSaved) Icons.Default.Check else Icons.Default.BookmarkAdd, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        // Was "Save to History" -- renamed to match the one consistent name the rest
-                        // of the app now uses for this same feature (bottom nav tab, Home's card,
-                        // Profile's menu item, the screen's own header all say "Progress").
-                        Text(if (isSaved) "Saved to Progress!" else if (isSaving) "Saving..." else "Save to Progress", fontSize = settings.textLg.sp, fontWeight = FontWeight.SemiBold)
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
+                    )
                 }
 
-                OutlinedButton(
-                    onClick = { navController.navigate(Screen.Scan.createRoute()) { popUpTo(Screen.Scan.route) { inclusive = true } } },
-                    modifier = Modifier.fillMaxWidth().height(52.dp).semantics { contentDescription = "Scan again" },
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.5.dp, Color(0xFFE5E7EB))
-                ) {
-                    Icon(Icons.Default.CameraAlt, contentDescription = null, tint = Color(0xFF374151), modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Scan Again", fontSize = settings.textLg.sp, color = Color(0xFF374151))
-                }
+                PillButton(
+                    text = "Find Nearby Clinic",
+                    icon = Icons.Default.LocationOn,
+                    container = DermaGreenLight,
+                    content = DermaGreenDark,
+                    onClick = { navController.navigate(Screen.ClinicLocator.route) }
+                )
 
-                Spacer(modifier = Modifier.height(32.dp))
+                PillButton(
+                    text = "Scan Again",
+                    icon = Icons.Default.CameraAlt,
+                    container = Color.White,
+                    content = Color(0xFF374151),
+                    elevated = true,
+                    modifier = Modifier.semantics { contentDescription = "Scan again" },
+                    onClick = { navController.navigate(Screen.Scan.createRoute()) { popUpTo(Screen.Scan.route) { inclusive = true } } }
+                )
             }
+
+            Spacer(modifier = Modifier.height(28.dp))
         }
         }
+    }
+}
+
+/** Circular confidence indicator: a purple arc filled to [percent] with the number in the middle. */
+@Composable
+private fun ConfidenceRing(percent: Float) {
+    val settings = LocalAppSettings.current
+    val sweep by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = percent.coerceIn(0f, 100f) / 100f * 360f,
+        animationSpec = tween(900),
+        label = "confidenceRing"
+    )
+    Box(
+        modifier = Modifier.size(64.dp).semantics { contentDescription = "${percent.roundToInt()}% confidence" },
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val stroke = 6.dp.toPx()
+            drawArc(color = DermaGreenLight, startAngle = 0f, sweepAngle = 360f, useCenter = false, style = Stroke(stroke))
+            drawArc(
+                color = DermaGreen,
+                startAngle = -90f,
+                sweepAngle = sweep,
+                useCenter = false,
+                style = Stroke(stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+            )
+        }
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text("${percent.roundToInt()}", fontSize = settings.textLg.sp, fontWeight = FontWeight.Bold, color = settings.textPrimary)
+            Text("%", fontSize = settings.textSm.sp, fontWeight = FontWeight.SemiBold, color = settings.textSecondary, modifier = Modifier.padding(bottom = 2.dp))
+        }
+    }
+}
+
+@Composable
+private fun InfoChip(text: String, background: Color, color: Color, icon: androidx.compose.ui.graphics.vector.ImageVector? = null) {
+    val settings = LocalAppSettings.current
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(background)
+            .then(if (background == Color.White) Modifier.border(1.dp, Color(0xFFE5E7EB), RoundedCornerShape(50)) else Modifier)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.width(5.dp))
+        }
+        Text(text, fontSize = settings.textSm.sp, fontWeight = FontWeight.SemiBold, color = color)
     }
 }
 
@@ -692,23 +779,24 @@ fun ResultCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val settings = LocalAppSettings.current
-    Card(
-        modifier = Modifier.fillMaxWidth()
-            .then(if (settings.highContrast) Modifier.border(1.dp, Color(0xFFCCCCCC), RoundedCornerShape(16.dp)) else Modifier),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = if (settings.highContrast) Color(0xFFF0F0F0) else bgColor),
-        elevation = CardDefaults.cardElevation(if (settings.highContrast) 0.dp else if (bgColor == Color.White) 2.dp else 0.dp)
+    val shape = RoundedCornerShape(24.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (bgColor == Color.White) Modifier.shadow(10.dp, shape, ambientColor = Color(0x1A4C1D95), spotColor = Color(0x1A4C1D95)) else Modifier)
+            .then(if (settings.highContrast) Modifier.border(1.dp, HcBorder, shape) else Modifier)
+            .clip(shape)
+            .background(bgColor)
+            .padding(18.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(iconBg), contentAlignment = Alignment.Center) {
-                    Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(title, fontSize = settings.textLg.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF111827))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(iconBg), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(21.dp))
             }
-            Spacer(modifier = Modifier.height(12.dp))
-            content()
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(title, fontSize = settings.textLg.sp, fontWeight = FontWeight.SemiBold, color = settings.textPrimary)
         }
+        Spacer(modifier = Modifier.height(12.dp))
+        content()
     }
 }

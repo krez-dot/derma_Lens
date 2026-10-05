@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -93,79 +94,86 @@ fun ProfileScreen(navController: NavController) {
     }
 
     Scaffold(
-        topBar = {
-            DermaGlassTopBar(title = "My Profile", titleColor = settings.textPrimary)
-        },
-        bottomBar = { DermaBottomNavBar(navController) }
+        bottomBar = { DermaBottomNavBar(navController) },
+        containerColor = DermaPageBackground
     ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding)
                 .verticalScroll(rememberScrollState())
-                .background(if (settings.highContrast) Color.White else Color(0xFFF8F9FA))
         ) {
-            // Header
-            Box(
-                modifier = Modifier.fillMaxWidth()
-                    .background(Brush.verticalGradient(colors = listOf(DermaGreen, DermaGreenDark)))
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(
-                        modifier = Modifier.size(88.dp).clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.2f))
-                            .border(if (settings.highContrast) 3.dp else 2.5.dp, Color.White, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(userName.split(" ").filter { it.isNotEmpty() }.take(2).map { it.first() }.joinToString("").ifEmpty { "?" }, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(userName, fontSize = settings.textXl.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(userEmail, fontSize = settings.textBase.sp, color = Color.White.copy(alpha = 0.8f))
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Box(modifier = Modifier.background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(20.dp)).padding(horizontal = 14.dp, vertical = 5.dp)) {
-                        Text("Member since $memberSince", fontSize = settings.textBase.sp, color = Color.White)
+            // Large title
+            Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp)) {
+                Eyebrow("Account")
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("Profile", fontSize = settings.textDisplay.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp, color = settings.textPrimary)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Profile card
+            EntranceAnimation {
+                SoftCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier.size(60.dp).clip(CircleShape)
+                                .background(Brush.linearGradient(listOf(Color(0xFFA78BFA), DermaGreen))),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(userName.split(" ").filter { it.isNotEmpty() }.take(2).map { it.first().uppercaseChar() }.joinToString("").ifEmpty { "?" }, fontSize = settings.textXxl.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(userName, fontSize = settings.textXl.sp, fontWeight = FontWeight.Bold, color = settings.textPrimary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            Text(userEmail, fontSize = settings.textBase.sp, color = settings.textSecondary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                "Member since $memberSince",
+                                fontSize = settings.textSm.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = DermaGreenDark,
+                                modifier = Modifier.clip(RoundedCornerShape(50)).background(DermaGreenLight).padding(horizontal = 10.dp, vertical = 3.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        val editInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                        Box(
+                            modifier = Modifier.size(42.dp)
+                                .pressScale(editInteraction)
+                                .clip(CircleShape)
+                                .background(DermaGreenLight)
+                                .clickable(interactionSource = editInteraction, indication = null) { navController.navigate(Screen.EditProfile.route) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Outlined.Edit, contentDescription = "Edit Profile", tint = DermaGreen, modifier = Modifier.size(20.dp))
+                        }
                     }
                 }
             }
 
-
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Stats
-            EntranceAnimation { Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).offset(y = (-1).dp)
-                    .then(if (settings.highContrast) Modifier.border(1.dp, Color.Black, RoundedCornerShape(16.dp)) else Modifier),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = if (settings.highContrast) Color(0xFFF0F0F0) else Color.White),
-                elevation = CardDefaults.cardElevation(if (settings.highContrast) 0.dp else 4.dp)
-            ) {
-                Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    ProfileStatItem("$totalScans", "Total Scans", "📷")
-                    VerticalDivider(modifier = Modifier.height(40.dp), color = if (settings.highContrast) Color(0xFFCCCCCC) else Color(0xFFF3F4F6))
-                    ProfileStatItem("$conditions", "Conditions", "🔍")
-                    VerticalDivider(modifier = Modifier.height(40.dp), color = if (settings.highContrast) Color(0xFFCCCCCC) else Color(0xFFF3F4F6))
-                    ProfileStatItem("$daysActive", "Days Active", "📅")
-                }
-            } }
+            EntranceAnimation(delayMillis = 40) {
+                StatRow(
+                    listOf("$totalScans" to "Total scans", "$conditions" to "Conditions", "$daysActive" to "Days active"),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
+                )
+            }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Disclaimer — placed near the top so it's one of the first things seen
-            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            // Disclaimer, placed near the top so it's one of the first things seen
+            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                 DiagnosticAidDisclaimer()
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Account Section
             EntranceAnimation(delayMillis = 60) { Column {
             ProfileSectionHeader("Account")
             Spacer(modifier = Modifier.height(8.dp))
             ProfileMenuCard {
-                ProfileMenuItem(icon = Icons.Default.Edit, iconBg = DermaGreenLight, iconTint = DermaGreen, title = "Edit Profile", subtitle = "Update your name and email", onClick = { navController.navigate(Screen.EditProfile.route) })
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFCCCCCC) else Color(0xFFF3F4F6))
                 ProfileMenuItemSwitch(icon = Icons.Default.Notifications, iconBg = Color(0xFFEFF6FF), iconTint = Color(0xFF2563EB), title = "Scan Reminders", subtitle = if (notificationsEnabled) "Reminders are ON" else "Reminders are OFF", checked = notificationsEnabled, onCheckedChange = {
                     notificationsEnabled = it
                     prefs.edit().putBoolean(DermaPrefs.KEY_NOTIFICATIONS_ENABLED, it).apply()
@@ -175,7 +183,7 @@ fun ProfileScreen(navController: NavController) {
                         com.dermalens.app.worker.NotificationScheduler.cancelReminder(context)
                     }
                 })
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFCCCCCC) else Color(0xFFF3F4F6))
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
                 // Fires a real notification ~5s later via a one-time WorkRequest, not a fake
                 // in-app toast pretending to be one -- see NotificationScheduler.scheduleTestReminder
                 // and feedback_workmanager_testing memory: force-running a periodic job directly is
@@ -184,7 +192,7 @@ fun ProfileScreen(navController: NavController) {
                     com.dermalens.app.worker.NotificationScheduler.scheduleTestReminder(context)
                     android.widget.Toast.makeText(context, "Test notification queued -- check your notification shade in ~5s", android.widget.Toast.LENGTH_SHORT).show()
                 })
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFCCCCCC) else Color(0xFFF3F4F6))
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
                 ProfileMenuItemSwitch(icon = Icons.Default.Science, iconBg = Color(0xFFF5F3FF), iconTint = Color(0xFF7C3AED), title = "Contribute to Research", subtitle = if (contributeData) "Your scans help improve DermaLens" else "Help us improve for Filipino skin tones", checked = contributeData, onCheckedChange = {
                     if (it) {
                         showContributeDialog = true
@@ -194,7 +202,7 @@ fun ProfileScreen(navController: NavController) {
                         com.dermalens.app.worker.ContributionUploadScheduler.cancelUpload(context)
                     }
                 })
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFCCCCCC) else Color(0xFFF3F4F6))
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
                 // Opt-in only, behind its own consent dialog: scan records are health information
                 // (sensitive personal information under RA 10173), so they never leave the phone
                 // unless the user explicitly turns this on. Photos are never uploaded either way.
@@ -216,8 +224,8 @@ fun ProfileScreen(navController: NavController) {
                 // the screen's own header all say "Progress"/"Progress Tracker"). Same
                 // destination, so the label should match instead of implying a different screen.
                 ProfileMenuItem(icon = Icons.Default.History, iconBg = Color(0xFFF5F3FF), iconTint = Color(0xFF7C3AED), title = "Progress", subtitle = "View all your past scans", onClick = { navController.navigate(Screen.ProgressTracker.route) })
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFCCCCCC) else Color(0xFFF3F4F6))
-                ProfileMenuItem(icon = Icons.Default.LocationOn, iconBg = Color(0xFFF0FDF4), iconTint = Color(0xFF16A34A), title = "Find Clinics", subtitle = "Locate nearby dermatologists", onClick = { navController.navigate(Screen.ClinicLocator.route) })
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
+                ProfileMenuItem(icon = Icons.Default.LocationOn, iconBg = Color(0xFFF0FDF4), iconTint = DermaSuccess, title = "Find Clinics", subtitle = "Locate nearby dermatologists", onClick = { navController.navigate(Screen.ClinicLocator.route) })
             }
             } }
 
@@ -229,8 +237,8 @@ fun ProfileScreen(navController: NavController) {
             Spacer(modifier = Modifier.height(8.dp))
             ProfileMenuCard {
                 ProfileMenuItem(icon = Icons.Default.Info, iconBg = Color(0xFFEFF6FF), iconTint = Color(0xFF2563EB), title = "About DermaLens", subtitle = "Version 1.0.0 — Capstone 2026", onClick = { showAboutDialog = true })
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFCCCCCC) else Color(0xFFF3F4F6))
-                ProfileMenuItem(icon = Icons.Default.Shield, iconBg = Color(0xFFF0FDF4), iconTint = Color(0xFF16A34A), title = "Privacy Policy", subtitle = "How we handle your data", onClick = { showPrivacyDialog = true })
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
+                ProfileMenuItem(icon = Icons.Default.Shield, iconBg = Color(0xFFF0FDF4), iconTint = DermaSuccess, title = "Privacy Policy", subtitle = "How we handle your data", onClick = { showPrivacyDialog = true })
             }
             } }
 
@@ -240,16 +248,10 @@ fun ProfileScreen(navController: NavController) {
             EntranceAnimation(delayMillis = 240) { Column {
             ProfileSectionHeader("Accessibility")
             Spacer(modifier = Modifier.height(8.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
-                    .then(if (settings.highContrast) Modifier.border(1.dp, Color.Black, RoundedCornerShape(14.dp)) else Modifier),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = if (settings.highContrast) Color(0xFFF0F0F0) else Color.White),
-                elevation = CardDefaults.cardElevation(if (settings.highContrast) 0.dp else 2.dp)
-            ) {
+            SoftCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFF5F3FF)), contentAlignment = Alignment.Center) {
+                        Box(modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFF5F3FF)), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.TextFields, contentDescription = null, tint = Color(0xFF7C3AED), modifier = Modifier.size(20.dp))
                         }
                         Spacer(modifier = Modifier.width(12.dp))
@@ -273,21 +275,36 @@ fun ProfileScreen(navController: NavController) {
                         }
                     }
 
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = if (settings.highContrast) Color(0xFFCCCCCC) else Color(0xFFF3F4F6))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
 
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFFEF3C7)), contentAlignment = Alignment.Center) {
+                        Box(modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFFEF3C7)), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.Contrast, contentDescription = "High contrast", tint = Color(0xFFD97706), modifier = Modifier.size(20.dp))
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text("High Contrast", fontSize = settings.textMd.sp, fontWeight = FontWeight.SemiBold, color = settings.textPrimary)
-                            Text(if (highContrast) "Enabled" else "Disabled", fontSize = settings.textBase.sp, color = settings.textSecondary)
+                            Text(
+                                when {
+                                    ContrastMode.systemHigh -> "On, from your phone's contrast setting"
+                                    highContrast -> "Enabled"
+                                    else -> "Disabled"
+                                },
+                                fontSize = settings.textBase.sp,
+                                color = settings.textSecondary
+                            )
                         }
                         Switch(
-                            checked = highContrast,
+                            checked = highContrast || ContrastMode.systemHigh,
+                            // While the phone's own setting has it on, switching it off here would do nothing.
+                            enabled = !ContrastMode.systemHigh,
                             onCheckedChange = { highContrast = it; prefs.edit().putBoolean(DermaPrefs.KEY_HIGH_CONTRAST, it).apply() },
-                            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = DermaGreen, uncheckedThumbColor = Color.White, uncheckedTrackColor = Color(0xFFE5E7EB))
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White, checkedTrackColor = DermaGreen,
+                                uncheckedThumbColor = Color.White, uncheckedTrackColor = Color(0xFFE5E7EB),
+                                // Locked on by the phone's setting: still reads as "on", just dimmed.
+                                disabledCheckedThumbColor = Color.White, disabledCheckedTrackColor = DermaGreen.copy(alpha = 0.55f)
+                            )
                         )
                     }
                 }
@@ -297,18 +314,14 @@ fun ProfileScreen(navController: NavController) {
             Spacer(modifier = Modifier.height(16.dp))
 
             // Logout
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).clickable { showLogoutDialog = true }
-                    .then(if (settings.highContrast) Modifier.border(1.dp, Color(0xFFDC2626), RoundedCornerShape(14.dp)) else Modifier),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = if (settings.highContrast) Color(0xFFFECACA) else Color(0xFFFEF2F2)),
-                elevation = CardDefaults.cardElevation(0.dp)
-            ) {
-                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                    Icon(Icons.Default.Logout, contentDescription = "Logout", tint = Color(0xFFDC2626), modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text("Logout", fontSize = settings.textLg.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFDC2626))
-                }
+            Box(modifier = Modifier.padding(horizontal = 20.dp)) {
+                PillButton(
+                    text = "Logout",
+                    icon = Icons.Default.Logout,
+                    container = Color(0xFFFEF2F2),
+                    content = DermaDanger,
+                    onClick = { showLogoutDialog = true }
+                )
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -316,33 +329,28 @@ fun ProfileScreen(navController: NavController) {
             // Delete Account -- fulfills the promise already made in the Privacy Policy's "Your
             // Rights" section ("You may delete your account and all associated data at any
             // time"), which had no actual implementation behind it until now.
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).clickable {
-                    deleteAccountPassword = ""; deleteAccountError = ""; showDeleteAccountDialog = true
-                }.then(if (settings.highContrast) Modifier.border(1.dp, Color(0xFF7F1D1D), RoundedCornerShape(14.dp)) else Modifier),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = if (settings.highContrast) Color(0xFFFECACA) else Color(0xFFFEF2F2)),
-                elevation = CardDefaults.cardElevation(0.dp),
-                border = if (settings.highContrast) null else BorderStroke(1.dp, Color(0xFFFECACA))
-            ) {
-                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                    Icon(Icons.Default.DeleteForever, contentDescription = "Delete Account", tint = Color(0xFF7F1D1D), modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text("Delete Account", fontSize = settings.textLg.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF7F1D1D))
-                }
+            Box(modifier = Modifier.padding(horizontal = 20.dp)) {
+                PillButton(
+                    text = "Delete Account",
+                    icon = Icons.Default.DeleteForever,
+                    container = Color.White,
+                    content = Color(0xFF991B1B),
+                    elevated = true,
+                    onClick = { deleteAccountPassword = ""; deleteAccountError = ""; showDeleteAccountDialog = true }
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-            Text("⚕️ DermaLens is a capstone project by Tarlac State University.\nFor educational and research purposes only.", fontSize = settings.textSm.sp, color = settings.textSecondary, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp), lineHeight = 16.sp)
+            Text("DermaLens is a capstone project by Tarlac State University.\nFor educational and research purposes only.", fontSize = settings.textSm.sp, color = settings.textSecondary, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp), lineHeight = 16.sp)
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
 
     // Logout Dialog
     if (showLogoutDialog) {
-        AlertDialog(
+        DermaAlertDialog(
             onDismissRequest = { showLogoutDialog = false },
-            icon = { Icon(Icons.Default.Logout, contentDescription = null, tint = Color(0xFFDC2626)) },
+            icon = { Icon(Icons.Default.Logout, contentDescription = null, tint = DermaDanger) },
             title = { Text("Logout", fontWeight = FontWeight.Bold, fontSize = settings.textXl.sp) },
             text = { Text("Are you sure you want to logout from DermaLens?", color = settings.textPrimary, fontSize = settings.textMd.sp) },
             confirmButton = {
@@ -359,12 +367,12 @@ fun ProfileScreen(navController: NavController) {
                         ScanHistorySync.clearLocalFlag(context)
                         navController.navigate(Screen.Login.route) { popUpTo(Screen.Home.route) { inclusive = true } }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-                    shape = RoundedCornerShape(10.dp)
+                    colors = ButtonDefaults.buttonColors(containerColor = DermaDanger),
+                    shape = RoundedCornerShape(50)
                 ) { Text("Logout", fontSize = settings.textMd.sp) }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showLogoutDialog = false }, shape = RoundedCornerShape(10.dp)) { Text("Cancel", fontSize = settings.textMd.sp) }
+                TextButton(onClick = { showLogoutDialog = false }) { Text("Cancel", fontSize = settings.textMd.sp) }
             },
             shape = RoundedCornerShape(16.dp),
             containerColor = Color.White,
@@ -384,7 +392,7 @@ fun ProfileScreen(navController: NavController) {
         val isGoogleOnlyDelete = remember(showDeleteAccountDialog) {
             FirebaseAuth.getInstance().currentUser?.let { isGoogleOnlyAccount(it) } ?: false
         }
-        AlertDialog(
+        DermaAlertDialog(
             onDismissRequest = { if (!isDeletingAccount) showDeleteAccountDialog = false },
             icon = { Icon(Icons.Default.DeleteForever, contentDescription = null, tint = Color(0xFF7F1D1D)) },
             title = { Text("Delete Account", fontWeight = FontWeight.Bold, fontSize = settings.textXl.sp) },
@@ -409,12 +417,12 @@ fun ProfileScreen(navController: NavController) {
                             singleLine = true,
                             enabled = !isDeletingAccount,
                             isError = deleteAccountError.isNotEmpty(),
-                            supportingText = { if (deleteAccountError.isNotEmpty()) Text(deleteAccountError, color = Color(0xFFDC2626)) },
+                            supportingText = { if (deleteAccountError.isNotEmpty()) Text(deleteAccountError, color = DermaDanger) },
                             modifier = Modifier.fillMaxWidth()
                         )
                     } else if (deleteAccountError.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text(deleteAccountError, color = Color(0xFFDC2626), fontSize = settings.textBase.sp)
+                        Text(deleteAccountError, color = DermaDanger, fontSize = settings.textBase.sp)
                     }
                 }
             },
@@ -488,7 +496,7 @@ fun ProfileScreen(navController: NavController) {
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7F1D1D)),
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(50),
                     enabled = !isDeletingAccount
                 ) {
                     if (isDeletingAccount) {
@@ -499,7 +507,7 @@ fun ProfileScreen(navController: NavController) {
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showDeleteAccountDialog = false }, shape = RoundedCornerShape(10.dp), enabled = !isDeletingAccount) { Text("Cancel", fontSize = settings.textMd.sp) }
+                OutlinedButton(onClick = { showDeleteAccountDialog = false }, shape = RoundedCornerShape(50), enabled = !isDeletingAccount) { Text("Cancel", fontSize = settings.textMd.sp) }
             },
             shape = RoundedCornerShape(16.dp),
             containerColor = Color.White,
@@ -510,7 +518,7 @@ fun ProfileScreen(navController: NavController) {
 
     // Contribute to Research Dialog
     if (showContributeDialog) {
-        AlertDialog(
+        DermaAlertDialog(
             onDismissRequest = { showContributeDialog = false },
             icon = { Icon(Icons.Default.Science, contentDescription = null, tint = Color(0xFF7C3AED)) },
             title = { Text("Contribute to Research", fontWeight = FontWeight.Bold, fontSize = settings.textXl.sp, color = Color(0xFF111827)) },
@@ -531,11 +539,11 @@ fun ProfileScreen(navController: NavController) {
                         showContributeDialog = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED)),
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(50)
                 ) { Text("Allow", fontSize = settings.textMd.sp) }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showContributeDialog = false }, shape = RoundedCornerShape(10.dp)) { Text("Not Now", fontSize = settings.textMd.sp) }
+                TextButton(onClick = { showContributeDialog = false }) { Text("Not Now", fontSize = settings.textMd.sp) }
             },
             shape = RoundedCornerShape(16.dp),
             containerColor = Color.White,
@@ -546,7 +554,7 @@ fun ProfileScreen(navController: NavController) {
 
     // Back Up Scan History -- consent dialog (turning ON)
     if (showBackupOnDialog) {
-        AlertDialog(
+        DermaAlertDialog(
             onDismissRequest = { showBackupOnDialog = false },
             icon = { Icon(Icons.Default.CloudUpload, contentDescription = null, tint = Color(0xFF2563EB)) },
             title = { Text("Back Up Scan History?", fontWeight = FontWeight.Bold, fontSize = settings.textXl.sp, color = Color(0xFF111827)) },
@@ -575,11 +583,11 @@ fun ProfileScreen(navController: NavController) {
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(50)
                 ) { Text("Back Up", fontSize = settings.textMd.sp) }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showBackupOnDialog = false }, shape = RoundedCornerShape(10.dp)) { Text("Not Now", fontSize = settings.textMd.sp) }
+                TextButton(onClick = { showBackupOnDialog = false }) { Text("Not Now", fontSize = settings.textMd.sp) }
             },
             shape = RoundedCornerShape(16.dp),
             containerColor = Color.White,
@@ -590,9 +598,9 @@ fun ProfileScreen(navController: NavController) {
 
     // Back Up Scan History -- turning OFF deletes the cloud copy
     if (showBackupOffDialog) {
-        AlertDialog(
+        DermaAlertDialog(
             onDismissRequest = { showBackupOffDialog = false },
-            icon = { Icon(Icons.Default.CloudOff, contentDescription = null, tint = Color(0xFFDC2626)) },
+            icon = { Icon(Icons.Default.CloudOff, contentDescription = null, tint = DermaDanger) },
             title = { Text("Turn Off Backup?", fontWeight = FontWeight.Bold, fontSize = settings.textXl.sp, color = Color(0xFF111827)) },
             text = {
                 Text(
@@ -616,12 +624,12 @@ fun ProfileScreen(navController: NavController) {
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-                    shape = RoundedCornerShape(10.dp)
+                    colors = ButtonDefaults.buttonColors(containerColor = DermaDanger),
+                    shape = RoundedCornerShape(50)
                 ) { Text("Turn Off", fontSize = settings.textMd.sp) }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showBackupOffDialog = false }, shape = RoundedCornerShape(10.dp)) { Text("Cancel", fontSize = settings.textMd.sp) }
+                TextButton(onClick = { showBackupOffDialog = false }) { Text("Cancel", fontSize = settings.textMd.sp) }
             },
             shape = RoundedCornerShape(16.dp),
             containerColor = Color.White,
@@ -632,16 +640,16 @@ fun ProfileScreen(navController: NavController) {
 
     // Privacy Policy Dialog
     if (showPrivacyDialog) {
-        AlertDialog(
+        DermaAlertDialog(
             onDismissRequest = { showPrivacyDialog = false },
-            icon = { Icon(Icons.Default.Shield, contentDescription = null, tint = Color(0xFF16A34A)) },
+            icon = { Icon(Icons.Default.Shield, contentDescription = null, tint = DermaSuccess) },
             title = { Text("Privacy Policy", fontWeight = FontWeight.Bold, fontSize = settings.textXl.sp, color = Color(0xFF111827)) },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("Effective Date: January 1, 2026", fontSize = settings.textSm.sp, color = Color(0xFF6B7280))
+                    Text("Effective Date: January 1, 2026", fontSize = settings.textSm.sp, color = DermaSubtle)
                     PrivacySection("1. Information We Collect", "DermaLens collects the following data to provide its services:\n\n• Profile information you provide (full name, email address)\n• Skin scan results including detected condition, confidence score, and severity level\n• Scan history and timestamps stored locally on your device (and, only if you turn on Back Up Scan History, in the cloud without photos)\n• Device location (GPS) used only to find nearby dermatology clinics")
                     PrivacySection("2. How We Use Your Data", "All data collected by DermaLens is used solely to:\n\n• Display your scan history and progress over time\n• Personalize your in-app experience\n• Help locate nearby dermatology clinics based on your location\n• Send optional daily skin care reminder notifications")
                     PrivacySection("3. Data Storage", "All personal data and scan records are stored locally on your device using a secure Room database, including a saved copy of each scan's photo so you can review your progress over time. Your account's email address and verification status are managed by Google Firebase Authentication.\n\nIf you turn on Back Up Scan History (Profile > Account), your scan records (condition, confidence, severity, date, and notes) are also stored in Google Firebase, accessible only to your account, so they can be restored on another phone. Scan photos are never included in this backup. Turning backup off, or deleting your account, deletes the cloud copy.\n\nScan images leave your device only if you separately opt in to Contribute to Research, and then anonymously.")
@@ -653,7 +661,7 @@ fun ProfileScreen(navController: NavController) {
                 }
             },
             confirmButton = {
-                Button(onClick = { showPrivacyDialog = false }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)), shape = RoundedCornerShape(10.dp)) {
+                Button(onClick = { showPrivacyDialog = false }, colors = ButtonDefaults.buttonColors(containerColor = DermaSuccess), shape = RoundedCornerShape(50)) {
                     Text("Got it", fontSize = settings.textMd.sp)
                 }
             },
@@ -666,17 +674,17 @@ fun ProfileScreen(navController: NavController) {
 
     // About Dialog
     if (showAboutDialog) {
-        AlertDialog(
+        DermaAlertDialog(
             onDismissRequest = { showAboutDialog = false },
             icon = { Image(painter = painterResource(id = R.drawable.dermalens_logo), contentDescription = null, modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp))) },
             title = { Text("DermaLens", fontWeight = FontWeight.Bold, color = DermaGreen, fontSize = settings.textXl.sp) },
             text = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Version 1.0.0", fontSize = settings.textBase.sp, color = Color(0xFF6B7280))
+                    Text("Version 1.0.0", fontSize = settings.textBase.sp, color = DermaSubtle)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("An Android-based skin disease detection system using YOLOv11 TFLite. Developed as a Capstone Project at Tarlac State University, 2026.", fontSize = settings.textBase.sp, color = Color(0xFF374151), textAlign = TextAlign.Center, lineHeight = 20.sp)
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text("Developed by:", fontSize = settings.textBase.sp, color = Color(0xFF6B7280))
+                    Text("Developed by:", fontSize = settings.textBase.sp, color = DermaSubtle)
                     Spacer(modifier = Modifier.height(4.dp))
                     listOf("Mark Joseph Garcia", "Reynaldo Manio Jr.", "Reicee Owen Pastrana", "Chrisent Dayniel Tolentino").forEach {
                         Text(it, fontSize = settings.textMd.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF111827))
@@ -684,7 +692,7 @@ fun ProfileScreen(navController: NavController) {
                 }
             },
             confirmButton = {
-                Button(onClick = { showAboutDialog = false }, colors = ButtonDefaults.buttonColors(containerColor = DermaGreen), shape = RoundedCornerShape(10.dp)) { Text("Close", fontSize = settings.textMd.sp) }
+                Button(onClick = { showAboutDialog = false }, colors = ButtonDefaults.buttonColors(containerColor = DermaGreen), shape = RoundedCornerShape(50)) { Text("Close", fontSize = settings.textMd.sp) }
             },
             shape = RoundedCornerShape(16.dp),
             containerColor = Color.White,
@@ -722,8 +730,8 @@ fun EditProfileScreen(navController: NavController) {
 
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedBorderColor = DermaGreen, focusedLabelColor = DermaGreen,
-        unfocusedBorderColor = if (settings.highContrast) Color.Black else Color(0xFFE5E7EB),
-        unfocusedLabelColor = if (settings.highContrast) Color(0xFF1a1a1a) else Color(0xFF9CA3AF),
+        unfocusedBorderColor = if (settings.highContrast) HcBorder else Color(0xFFE5E7EB),
+        unfocusedLabelColor = if (settings.highContrast) Color(0xFF1a1a1a) else DermaMuted,
         focusedTextColor = Color(0xFF111827), unfocusedTextColor = Color(0xFF111827)
     )
 
@@ -776,37 +784,40 @@ fun EditProfileScreen(navController: NavController) {
     }
 
     Scaffold(
-        containerColor = if (settings.highContrast) Color.White else Color(0xFFF8F9FA),
-        topBar = {
-            DermaGlassTopBar(
-                title = "Edit Profile",
-                onBack = { navController.popBackStack() },
-                titleColor = settings.textPrimary
-            )
-        }
+        containerColor = DermaPageBackground
     ) { innerPadding ->
         Column(
             // imePadding() is needed because the app runs edge-to-edge (enableEdgeToEdge() in
             // MainActivity) -- without it, nothing pushes this content above the keyboard and the
             // lower fields (password inputs, Save button) end up hidden behind it.
-            modifier = Modifier.fillMaxSize().background(if (settings.highContrast) Color.White else Color(0xFFF8F9FA)).padding(innerPadding).verticalScroll(rememberScrollState()).imePadding().padding(24.dp),
+            modifier = Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 20.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(8.dp))
+            // Large-title header
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                RoundIconButton(icon = Icons.Default.ArrowBack, contentDescription = "Go back", onClick = { navController.popBackStack() })
+                Spacer(modifier = Modifier.width(14.dp))
+                Column {
+                    Eyebrow("Account")
+                    Text("Edit profile", fontSize = settings.textTitle.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp, color = settings.textPrimary)
+                }
+            }
+            Spacer(modifier = Modifier.height(24.dp))
             Box(
-                modifier = Modifier.size(88.dp).clip(CircleShape).background(DermaGreenLight)
-                    .border(2.5.dp, DermaGreen, CircleShape),
+                modifier = Modifier.size(92.dp).clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(Color(0xFFA78BFA), DermaGreen)))
+                    .border(4.dp, Color.White, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text(name.split(" ").filter { it.isNotEmpty() }.take(2).map { it.first() }.joinToString("").ifEmpty { "?" }, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = DermaGreen)
+                Text(name.split(" ").filter { it.isNotEmpty() }.take(2).map { it.first().uppercaseChar() }.joinToString("").ifEmpty { "?" }, fontSize = 32.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
             Spacer(modifier = Modifier.height(24.dp))
 
             // Profile Info
-            Card(modifier = Modifier.fillMaxWidth().then(if (settings.highContrast) Modifier.border(1.dp, Color.Black, RoundedCornerShape(16.dp)) else Modifier), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = if (settings.highContrast) Color(0xFFF0F0F0) else Color.White), elevation = CardDefaults.cardElevation(if (settings.highContrast) 0.dp else 2.dp)) {
+            SoftCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Profile Info", fontSize = settings.textBase.sp, fontWeight = FontWeight.SemiBold, color = settings.textSecondary)
-                    OutlinedTextField(value = name, onValueChange = { name = it; isSaved = false }, label = { Text("Full name") }, leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = fieldColors)
+                    Text("Profile Info", fontSize = settings.textLg.sp, fontWeight = FontWeight.Bold, color = settings.textPrimary)
+                    OutlinedTextField(value = name, onValueChange = { name = it; isSaved = false }, label = { Text("Full name") }, leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = fieldColors)
                     OutlinedTextField(
                         value = email,
                         onValueChange = {},
@@ -814,7 +825,7 @@ fun EditProfileScreen(navController: NavController) {
                         enabled = false,
                         label = { Text("Email address") },
                         leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
-                        singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = fieldColors
+                        singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = fieldColors
                     )
                 }
             }
@@ -824,35 +835,43 @@ fun EditProfileScreen(navController: NavController) {
             // Account security -- password changes go through Firebase reauthentication
             // (re-enter current password first). Google-only accounts have no password to
             // change here at all; their credentials live with Google, not Firebase.
-            Card(modifier = Modifier.fillMaxWidth().then(if (settings.highContrast) Modifier.border(1.dp, Color.Black, RoundedCornerShape(16.dp)) else Modifier), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = if (settings.highContrast) Color(0xFFF0F0F0) else Color.White), elevation = CardDefaults.cardElevation(if (settings.highContrast) 0.dp else 2.dp)) {
+            SoftCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Account Security", fontSize = settings.textBase.sp, fontWeight = FontWeight.SemiBold, color = settings.textSecondary)
+                    Text("Account Security", fontSize = settings.textLg.sp, fontWeight = FontWeight.Bold, color = settings.textPrimary)
                     if (isGoogleOnly) {
                         Text("This account signs in with Google. Your password is managed by your Google account, not DermaLens.", fontSize = settings.textSm.sp, color = settings.textSecondary)
                     } else {
                         Text("Leave blank to keep your current password", fontSize = settings.textSm.sp, color = settings.textSecondary)
-                        OutlinedTextField(value = currentPassword, onValueChange = { currentPassword = it; isSaved = false; errorMessage = "" }, label = { Text("Current password") }, leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) }, trailingIcon = { IconButton(onClick = { showCurrentPassword = !showCurrentPassword }) { Icon(if (showCurrentPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = if (showCurrentPassword) "Hide password" else "Show password") } }, visualTransformation = if (showCurrentPassword) VisualTransformation.None else PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = fieldColors)
-                        OutlinedTextField(value = newPassword, onValueChange = { newPassword = it; isSaved = false; errorMessage = "" }, label = { Text("New password") }, leadingIcon = { Icon(Icons.Default.LockOpen, contentDescription = null) }, trailingIcon = { IconButton(onClick = { showNewPassword = !showNewPassword }) { Icon(if (showNewPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = if (showNewPassword) "Hide password" else "Show password") } }, visualTransformation = if (showNewPassword) VisualTransformation.None else PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = fieldColors)
-                        OutlinedTextField(value = confirmPassword, onValueChange = { confirmPassword = it; isSaved = false; errorMessage = "" }, label = { Text("Confirm new password") }, leadingIcon = { Icon(Icons.Default.LockOpen, contentDescription = null) }, trailingIcon = { IconButton(onClick = { showConfirmPassword = !showConfirmPassword }) { Icon(if (showConfirmPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = if (showConfirmPassword) "Hide password" else "Show password") } }, visualTransformation = if (showConfirmPassword) VisualTransformation.None else PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = fieldColors)
+                        OutlinedTextField(value = currentPassword, onValueChange = { currentPassword = it; isSaved = false; errorMessage = "" }, label = { Text("Current password") }, leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) }, trailingIcon = { IconButton(onClick = { showCurrentPassword = !showCurrentPassword }) { Icon(if (showCurrentPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = if (showCurrentPassword) "Hide password" else "Show password") } }, visualTransformation = if (showCurrentPassword) VisualTransformation.None else PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = fieldColors)
+                        OutlinedTextField(value = newPassword, onValueChange = { newPassword = it; isSaved = false; errorMessage = "" }, label = { Text("New password") }, leadingIcon = { Icon(Icons.Default.LockOpen, contentDescription = null) }, trailingIcon = { IconButton(onClick = { showNewPassword = !showNewPassword }) { Icon(if (showNewPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = if (showNewPassword) "Hide password" else "Show password") } }, visualTransformation = if (showNewPassword) VisualTransformation.None else PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = fieldColors)
+                        OutlinedTextField(value = confirmPassword, onValueChange = { confirmPassword = it; isSaved = false; errorMessage = "" }, label = { Text("Confirm new password") }, leadingIcon = { Icon(Icons.Default.LockOpen, contentDescription = null) }, trailingIcon = { IconButton(onClick = { showConfirmPassword = !showConfirmPassword }) { Icon(if (showConfirmPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = if (showConfirmPassword) "Hide password" else "Show password") } }, visualTransformation = if (showConfirmPassword) VisualTransformation.None else PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = fieldColors)
                     }
                 }
             }
 
             if (errorMessage.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Text(errorMessage, color = Color(0xFFDC2626), fontSize = settings.textBase.sp, fontWeight = FontWeight.Medium)
+                Text(errorMessage, color = DermaDanger, fontSize = settings.textBase.sp, fontWeight = FontWeight.Medium)
             }
 
             Spacer(modifier = Modifier.height(20.dp))
-            Button(onClick = { saveTrigger++ }, enabled = hasChanges || isSaved, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = if (isSaved) Color(0xFF16A34A) else DermaGreen)) {
-                Icon(if (isSaved) Icons.Default.Check else Icons.Default.Save, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(if (isSaved) "Saved!" else "Save Changes", fontSize = settings.textLg.sp, fontWeight = FontWeight.SemiBold)
-            }
+            val canSave = hasChanges || isSaved
+            PillButton(
+                text = if (isSaved) "Saved!" else "Save Changes",
+                icon = if (isSaved) Icons.Default.Check else Icons.Default.Save,
+                container = if (isSaved) DermaSuccess else if (canSave) DermaGreen else Color(0xFFC4B5FD),
+                elevated = canSave,
+                enabled = canSave,
+                onClick = { saveTrigger++ }
+            )
             Spacer(modifier = Modifier.height(10.dp))
-            OutlinedButton(onClick = { navController.popBackStack() }, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.5.dp, if (settings.highContrast) Color.Black else Color(0xFFE5E7EB))) {
-                Text("Cancel", color = settings.textPrimary, fontSize = settings.textLg.sp)
-            }
+            PillButton(
+                text = "Cancel",
+                container = Color.White,
+                content = settings.textPrimary,
+                elevated = true,
+                onClick = { navController.popBackStack() }
+            )
             Spacer(modifier = Modifier.height(16.dp))
         }
     }
@@ -864,14 +883,14 @@ fun PrivacySection(title: String, body: String) {
     val settings = LocalAppSettings.current
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(title, fontSize = settings.textBase.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF111827))
-        Text(body, fontSize = settings.textSm.sp, color = Color(0xFF6B7280), lineHeight = 18.sp)
+        Text(body, fontSize = settings.textSm.sp, color = DermaSubtle, lineHeight = 18.sp)
     }
 }
 
 @Composable
 fun ProfileSectionHeader(title: String) {
     val settings = LocalAppSettings.current
-    Text(title.uppercase(), fontSize = settings.textSm.sp, fontWeight = FontWeight.Bold, color = settings.textSecondary, letterSpacing = 1.sp, modifier = Modifier.padding(horizontal = 16.dp))
+    Text(title, fontSize = settings.textLg.sp, fontWeight = FontWeight.Bold, color = settings.textPrimary, modifier = Modifier.padding(horizontal = 22.dp))
 }
 
 @Composable
@@ -887,23 +906,14 @@ fun ProfileStatItem(value: String, label: String, icon: String) {
 
 @Composable
 fun ProfileMenuCard(content: @Composable ColumnScope.() -> Unit) {
-    val settings = LocalAppSettings.current
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
-            .then(if (settings.highContrast) Modifier.border(1.dp, Color.Black, RoundedCornerShape(14.dp)) else Modifier),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = if (settings.highContrast) Color(0xFFF0F0F0) else Color.White),
-        elevation = CardDefaults.cardElevation(if (settings.highContrast) 0.dp else 2.dp)
-    ) {
-        Column { content() }
-    }
+    SoftCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), content = content)
 }
 
 @Composable
 fun ProfileMenuItem(icon: ImageVector, iconBg: Color, iconTint: Color, title: String, subtitle: String, onClick: () -> Unit = {}) {
     val settings = LocalAppSettings.current
     Row(modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(iconBg), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(iconBg), contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
         }
         Spacer(modifier = Modifier.width(12.dp))
@@ -919,7 +929,7 @@ fun ProfileMenuItem(icon: ImageVector, iconBg: Color, iconTint: Color, title: St
 fun ProfileMenuItemSwitch(icon: ImageVector, iconBg: Color, iconTint: Color, title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     val settings = LocalAppSettings.current
     Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(iconBg), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(iconBg), contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
         }
         Spacer(modifier = Modifier.width(12.dp))

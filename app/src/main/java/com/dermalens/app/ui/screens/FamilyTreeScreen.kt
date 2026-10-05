@@ -8,8 +8,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountTree
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -123,79 +124,102 @@ fun FamilyTreeScreen(navController: NavController, condition: String) {
     // color-coding thread that ties the rest of the app together.
     val conditionColor = mockDetectionResults.find { it.condition == condition }?.color ?: DermaGreen
 
-    Scaffold(
-        topBar = {
-            DermaGlassTopBar(
-                title = "$condition Family Tree",
-                onBack = { navController.popBackStack() },
-                titleColor = settings.textPrimary
-            )
-        }
-    ) { innerPadding ->
-        if (tree == null) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "No family tree reference is available for $condition yet.",
-                    fontSize = settings.textMd.sp,
-                    color = Color(0xFF6B7280),
-                    modifier = Modifier.padding(24.dp)
-                )
-            }
-            return@Scaffold
-        }
-
+    Scaffold(containerColor = DermaPageBackground) { innerPadding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(innerPadding)
-                .background(if (settings.highContrast) Color.White else Color(0xFFF8F9FA)),
-            contentPadding = PaddingValues(16.dp)
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                ResultCard(icon = Icons.Default.Info, iconBg = conditionColor.copy(alpha = 0.1f), iconTint = conditionColor, title = "Why these are grouped together") {
-                    Text(tree.groupingNote, fontSize = settings.textMd.sp, color = Color(0xFF374151), lineHeight = 22.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RoundIconButton(icon = Icons.Default.ArrowBack, contentDescription = "Go back", onClick = { navController.popBackStack() })
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column {
+                        Eyebrow("Family tree")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(conditionColor))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(condition, fontSize = settings.textTitle.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp, color = settings.textPrimary)
+                        }
+                    }
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+            }
+
+            if (tree == null) {
+                item {
+                    SoftCard(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            "No family tree reference is available for $condition yet.",
+                            fontSize = settings.textMd.sp,
+                            color = settings.textSecondary,
+                            modifier = Modifier.padding(24.dp)
+                        )
+                    }
+                }
+                return@LazyColumn
+            }
+
+            item {
+                ResultCard(icon = Icons.Outlined.Info, iconBg = conditionColor.copy(alpha = 0.12f), iconTint = conditionColor, title = "Why these are grouped together") {
+                    Text(tree.groupingNote, fontSize = settings.textMd.sp, color = Color(0xFF374151), lineHeight = (settings.textMd * 1.55f).sp)
+                }
+            }
+
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFFF1F0F7))
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Outlined.Info, contentDescription = null, tint = DermaSubtle, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "Reference only -- this app doesn't detect which of these a photo shows. See a dermatologist for an actual diagnosis.",
+                        fontSize = settings.textSm.sp,
+                        color = DermaSubtle,
+                        lineHeight = (settings.textSm * 1.4f).sp
+                    )
+                }
+            }
+
+            item {
                 Text(
-                    "Reference only -- this app doesn't detect which of these a photo shows. See a dermatologist for an actual diagnosis.",
-                    fontSize = settings.textSm.sp,
-                    color = Color(0xFF9CA3AF),
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
+                    "Related conditions",
+                    fontSize = settings.textLg.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = settings.textPrimary,
+                    modifier = Modifier.padding(top = 4.dp)
                 )
-                Spacer(modifier = Modifier.height(8.dp))
             }
 
             items(tree.relatives) { relative ->
-                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
-                    // A simple branch indicator -- a dot and a short stem -- gives the "tree" a
-                    // visual identity without needing a full custom-drawn diagram.
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(24.dp).padding(top = 18.dp)) {
-                        Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(conditionColor))
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Card(
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        elevation = CardDefaults.cardElevation(2.dp)
-                    ) {
-                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
-                            LesionSchematicIcon(
-                                type = relative.icon,
-                                modifier = Modifier.semantics { contentDescription = "Schematic illustration, not a photo" }
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(relative.name, fontSize = settings.textMd.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF111827))
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(relative.description, fontSize = settings.textSm.sp, color = Color(0xFF4B5563), lineHeight = 18.sp)
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Row {
-                                    Icon(Icons.Default.AccountTree, contentDescription = null, tint = Color(0xFF9CA3AF), modifier = Modifier.size(14.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(relative.distinguishingFeature, fontSize = settings.textSm.sp, color = Color(0xFF6B7280), lineHeight = 16.sp)
-                                }
+                SoftCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
+                        LesionSchematicIcon(
+                            type = relative.icon,
+                            modifier = Modifier.semantics { contentDescription = "Schematic illustration, not a photo" }
+                        )
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(relative.name, fontSize = settings.textLg.sp, fontWeight = FontWeight.SemiBold, color = settings.textPrimary)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(relative.description, fontSize = settings.textBase.sp, color = Color(0xFF4B5563), lineHeight = (settings.textBase * 1.45f).sp)
+                            Spacer(modifier = Modifier.height(10.dp))
+                            // How to tell it apart, set off in the condition's colour
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(conditionColor.copy(alpha = 0.08f))
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Icon(Icons.Outlined.Visibility, contentDescription = null, tint = conditionColor, modifier = Modifier.size(15.dp).padding(top = 1.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(relative.distinguishingFeature, fontSize = settings.textSm.sp, color = Color(0xFF374151), lineHeight = (settings.textSm * 1.45f).sp)
                             }
                         }
                     }
