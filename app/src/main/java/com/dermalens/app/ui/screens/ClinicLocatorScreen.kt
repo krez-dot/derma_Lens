@@ -24,25 +24,35 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.LocalHospital
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import com.dermalens.app.BuildConfig
+import com.dermalens.app.ui.LocalAppSettings
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
@@ -51,7 +61,9 @@ import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.Marker
@@ -121,34 +133,69 @@ private fun haversineKm(lat1: Double, lng1: Double, lat2: Double, lng2: Double):
     return r * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-private fun createMarkerBitmap(context: Context): Bitmap {
-    val dp = context.resources.displayMetrics.density
-    val w = (36 * dp).toInt()
-    val h = (50 * dp).toInt()
+/** A drawn clinic pin plus where its tip touches the map, as a fraction of the bitmap height (the marker anchor). */
+private class PinBitmap(val bitmap: Bitmap, val anchorY: Float)
+
+/**
+ * Clinic pin: a small rounded-square tile in the clinic's status [color] with a white rounded "+"
+ * and a short pointer whose tip marks the spot. Square rather than round so it doesn't blend in
+ * with Google's own round place icons. [selected] draws it larger.
+ */
+private fun createMarkerBitmap(context: Context, color: Int, selected: Boolean = false): PinBitmap {
+    val s = context.resources.displayMetrics.density
+    val tile = (if (selected) 38f else 28f) * s
+    val rim = (if (selected) 2.5f else 2f) * s
+    val corner = tile * 0.32f
+    val pointer = (if (selected) 7f else 5.5f) * s
+    val pad = 4f * s                            // room for the shadow blur
+    val w = (tile + 2 * pad).toInt()
+    val left = (w - tile) / 2f
+    val top = pad
+    val cx = w / 2f
+    val cy = top + tile / 2f
+    val tipY = top + tile + pointer
+    val h = (tipY + pad + 1f * s).toInt()
+
     val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    val cx = w / 2f
-    val r = w / 2f
-    paint.color = 0xFF7C3AED.toInt()
+
+    fun silhouette(inset: Float) = Path().apply {
+        val box = android.graphics.RectF(left + inset, top + inset, left + tile - inset, top + tile - inset)
+        addRoundRect(box, corner - inset, corner - inset, Path.Direction.CW)
+        op(Path().apply {
+            moveTo(cx - pointer, top + tile - inset - 1f * s)
+            lineTo(cx, tipY - inset * 1.6f)
+            lineTo(cx + pointer, top + tile - inset - 1f * s)
+            close()
+        }, Path.Op.UNION)
+    }
+
+    // White silhouette carries the shadow; the coloured tile sits inside it, leaving a white rim.
     paint.style = Paint.Style.FILL
-    canvas.drawCircle(cx, r, r, paint)
-    val path = Path()
-    path.moveTo(cx - r * 0.45f, r + r * 0.55f)
-    path.lineTo(cx + r * 0.45f, r + r * 0.55f)
-    path.lineTo(cx, h.toFloat())
-    path.close()
-    canvas.drawPath(path, paint)
     paint.color = 0xFFFFFFFF.toInt()
-    canvas.drawCircle(cx, r, r * 0.42f, paint)
-    paint.color = 0xFF7C3AED.toInt()
-    paint.style = Paint.Style.STROKE
-    paint.strokeWidth = r * 0.28f
-    paint.strokeCap = Paint.Cap.ROUND
-    val arm = r * 0.26f
-    canvas.drawLine(cx, r - arm, cx, r + arm, paint)
-    canvas.drawLine(cx - arm, r, cx + arm, r, paint)
-    return bitmap
+    paint.setShadowLayer(3f * s, 0f, 1.2f * s, 0x40000000)
+    canvas.drawPath(silhouette(0f), paint)
+    paint.clearShadowLayer()
+
+    paint.color = color
+    canvas.drawPath(silhouette(rim), paint)
+
+    // Rounded "+".
+    paint.color = 0xFFFFFFFF.toInt()
+    val arm = tile * 0.24f
+    val thick = tile * 0.075f
+    canvas.drawRoundRect(android.graphics.RectF(cx - thick, cy - arm, cx + thick, cy + arm), thick, thick, paint)
+    canvas.drawRoundRect(android.graphics.RectF(cx - arm, cy - thick, cx + arm, cy + thick), thick, thick, paint)
+
+    return PinBitmap(bitmap, tipY / h)
+}
+
+/** Pin colours: the cards' open/closed/unknown hues, a step brighter so they hold up at pin size. */
+private fun pinColor(openNow: Boolean?): Int = when (openNow) {
+    true -> 0xFF16A34A.toInt()
+    false -> 0xFFDC2626.toInt()
+    null -> 0xFF64748B.toInt()
 }
 
 private fun isNetworkAvailable(context: Context): Boolean {
@@ -377,6 +424,10 @@ fun ClinicLocatorScreen(navController: NavController) {
     val scope = rememberCoroutineScope()
     var showMap by remember { mutableStateOf(true) }
     var selectedClinic by remember { mutableStateOf<Clinic?>(null) }
+    // The clinic picked on the map (red pin + its route + highlighted card). Separate from
+    // selectedClinic, which only drives the details dialog -- tapping a pin shouldn't pop a dialog
+    // over the very route it just drew.
+    var focusedClinic by remember { mutableStateOf<Clinic?>(null) }
     // Crowd-sourced open/closed tally for whichever clinic's popup is currently open -- see
     // ClinicVotes.kt. Reset per-clinic by the LaunchedEffect below, not shared across clinics.
     var voteTally by remember { mutableStateOf<ClinicVoteTally?>(null) }
@@ -592,83 +643,47 @@ fun ClinicLocatorScreen(navController: NavController) {
         lastRouteFetch = Triple(clinics, userLat, userLng)
     }
 
-    Scaffold(
-        topBar = {
-            DermaGlassTopBar(
-                title = "Clinic Locator",
-                onBack = { navController.popBackStack() },
-                titleColor = Color(0xFF1a1a1a),
-                actions = {
-                    val mapToggleInteractionSource = remember { MutableInteractionSource() }
-                    Icon(
-                        imageVector = if (showMap) Icons.Default.List else Icons.Default.Map,
-                        contentDescription = if (showMap) "List View" else "Map View",
-                        tint = DermaGreen,
-                        modifier = Modifier
-                            .pressScale(mapToggleInteractionSource)
-                            .padding(4.dp)
-                            .clickable(
-                                interactionSource = mapToggleInteractionSource,
-                                indication = null,
-                                onClick = { showMap = !showMap }
-                            )
-                            .padding(12.dp)
-                    )
-                }
-            )
+    // Offline / no-location / no-results states, shared by the map's sheet and the list view.
+    val clinicStatusItems: LazyListScope.() -> Unit = {
+        if (!hasLocationPermission) {
+            item { LocationPermissionBanner(locationPermanentlyDenied, onAllow = {
+                if (locationPermanentlyDenied) openAppSettings()
+                else permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+            }) }
         }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier.fillMaxSize().padding(innerPadding).background(Color(0xFFF8F9FA))
+        item { DiagnosticAidDisclaimer() }
+        if (!isLoading && isOffline) {
+            item { OfflineClinicsState(onRetry = { retryTrigger++ }, onBackToHome = { navController.popBackStack() }) }
+        } else if (!isLoading && locationUnavailable) {
+            item {
+                OfflineClinicsState(
+                    onRetry = { if (locationPermanentlyDenied) openAppSettings() else retryTrigger++ },
+                    onBackToHome = { navController.popBackStack() },
+                    icon = Icons.Default.LocationOff,
+                    title = "Couldn't Determine Your Location",
+                    message = if (locationPermanentlyDenied)
+                        "Location access was denied and can no longer be requested from within the app. Enable it from Settings to find clinics near you."
+                    else
+                        "Make sure location services (GPS) are turned on for your device, then retry. This isn't the same as camera or app permissions -- it's a separate system setting.",
+                    retryLabel = if (locationPermanentlyDenied) "Open Settings" else "Retry"
+                )
+            }
+        } else if (!isLoading && clinics.isEmpty()) {
+            item { EmptyClinicsState() }
+        }
+    }
+    // Number of items clinicStatusItems puts ahead of the first clinic card, for scrolling the
+    // sheet to whichever clinic was tapped on the map. The empty/offline states never coexist
+    // with real clinics, so only the banner and the disclaimer can sit above them.
+    val itemsBeforeClinics = (if (!hasLocationPermission) 1 else 0) + 1
+
+    // Height of the floating back button + Map/List pill row, below the status bar.
+    val topControls = androidx.compose.foundation.layout.WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 72.dp
+
+    Scaffold(containerColor = DermaPageBackground, bottomBar = { DermaBottomNavBar(navController) }) { innerPadding ->
+        Box(
+            modifier = Modifier.fillMaxSize().padding(bottom = innerPadding.calculateBottomPadding()).clipToBounds().background(DermaPageBackground)
         ) {
-            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                DiagnosticAidDisclaimer()
-            }
-
-            // Location permission banner
-            if (!hasLocationPermission) {
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.LocationOff, contentDescription = null, tint = Color(0xFFE65100), modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Location access needed", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE65100))
-                            Text(
-                                if (locationPermanentlyDenied) "Enable it from Settings to find clinics near you" else "Enable location to find clinics near you",
-                                fontSize = 12.sp, color = Color(0xFFE65100)
-                            )
-                        }
-                        TextButton(onClick = {
-                            if (locationPermanentlyDenied) openAppSettings()
-                            else permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-                        }) {
-                            Text(if (locationPermanentlyDenied) "Open Settings" else "Allow", color = DermaGreen, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-
-            // Search Bar
-            Row(
-                modifier = Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Default.LocationOn, contentDescription = null, tint = DermaGreen, modifier = Modifier.size(20.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(locationLabel, fontSize = 14.sp, color = Color(0xFF444444), fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                Box(modifier = Modifier.background(DermaGreenLight, RoundedCornerShape(20.dp)).padding(horizontal = 12.dp, vertical = 4.dp)) {
-                    if (isLoading) {
-                        CircularProgressIndicator(color = DermaGreen, modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                    } else {
-                        Text("${clinics.size} clinics found", fontSize = 12.sp, color = DermaGreen, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-
             AnimatedContent(
                 targetState = showMap,
                 transitionSpec = {
@@ -678,185 +693,223 @@ fun ClinicLocatorScreen(navController: NavController) {
                 label = "clinicViewToggle"
             ) { targetShowMap ->
             if (targetShowMap) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                Box(modifier = Modifier.fillMaxWidth().height(300.dp)) {
-                    val mapScope = rememberCoroutineScope()
-                    val cameraPositionState = rememberCameraPositionState {
-                        position = CameraPosition.fromLatLngZoom(LatLng(userLat, userLng), 14.5f)
+                val sheetListState = rememberLazyListState()
+                val mapScope = rememberCoroutineScope()
+                val cameraPositionState = rememberCameraPositionState {
+                    position = CameraPosition.fromLatLngZoom(LatLng(userLat, userLng), 14.5f)
+                }
+                // BitmapDescriptorFactory can throw if called before the Maps SDK's internal
+                // renderer has finished initializing (kicked off in MainActivity.onCreate(),
+                // but not guaranteed to have completed yet on a very fast navigation) -- fall
+                // back to Maps' default pin rather than crash the screen in that case.
+                // Pins share the cards' open/closed/unknown colours; the selected one is just larger,
+                // so it doesn't read as a status of its own.
+                val markerIcons = remember(context) {
+                    listOf(true, false, null).associateWith { openNow ->
+                        val color = pinColor(openNow)
+                        try {
+                            Pair(createMarkerBitmap(context, color), createMarkerBitmap(context, color, selected = true))
+                                .let { (plain, focused) ->
+                                    Pair(
+                                        BitmapDescriptorFactory.fromBitmap(plain.bitmap) to plain.anchorY,
+                                        BitmapDescriptorFactory.fromBitmap(focused.bitmap) to focused.anchorY
+                                    )
+                                }
+                        } catch (e: Exception) { null }
                     }
-                    // BitmapDescriptorFactory can throw if called before the Maps SDK's internal
-                    // renderer has finished initializing (kicked off in MainActivity.onCreate(),
-                    // but not guaranteed to have completed yet on a very fast navigation) -- fall
-                    // back to Maps' default pin rather than crash the screen in that case.
-                    val markerIcon = remember(context) {
-                        try { BitmapDescriptorFactory.fromBitmap(createMarkerBitmap(context)) } catch (e: Exception) { null }
-                    }
-                    val userDotIcon = remember(context) {
-                        try { BitmapDescriptorFactory.fromBitmap(createUserDotBitmap(context)) } catch (e: Exception) { null }
-                    }
+                }
+                val userDotIcon = remember(context) {
+                    try { BitmapDescriptorFactory.fromBitmap(createUserDotBitmap(context)) } catch (e: Exception) { null }
+                }
 
-                    // Real bug: userLat/userLng start at a hardcoded default (Tarlac City) before
-                    // any real fetch resolves, and this effect fires immediately on first
-                    // composition too -- with those still-default values. That meant it centered
-                    // on Tarlac and set mapCentered = true before the real location ever arrived,
-                    // permanently refusing to re-center once it did (guarded by !mapCentered). The
-                    // "You are here" dot itself would move once real data came in, but the camera
-                    // view stayed stuck wherever it first happened to fire. Gating on !isLoading
-                    // ensures this only centers once the initial fetch has actually resolved.
-                    LaunchedEffect(userLat, userLng, isLoading) {
-                        if (!mapCentered && !isLoading) {
-                            cameraPositionState.position = CameraPosition.fromLatLngZoom(LatLng(userLat, userLng), 14.5f)
-                            mapCentered = true
-                        }
+                // Real bug: userLat/userLng start at a hardcoded default (Tarlac City) before
+                // any real fetch resolves, and this effect fires immediately on first
+                // composition too -- with those still-default values. That meant it centered
+                // on Tarlac and set mapCentered = true before the real location ever arrived,
+                // permanently refusing to re-center once it did (guarded by !mapCentered). The
+                // "You are here" dot itself would move once real data came in, but the camera
+                // view stayed stuck wherever it first happened to fire. Gating on !isLoading
+                // ensures this only centers once the initial fetch has actually resolved.
+                LaunchedEffect(userLat, userLng, isLoading) {
+                    if (!mapCentered && !isLoading) {
+                        cameraPositionState.position = CameraPosition.fromLatLngZoom(LatLng(userLat, userLng), 14.5f)
+                        mapCentered = true
                     }
+                }
 
-                    GoogleMap(
-                        modifier = Modifier.fillMaxSize(),
-                        cameraPositionState = cameraPositionState,
-                        uiSettings = MapUiSettings(zoomControlsEnabled = false, myLocationButtonEnabled = false)
-                    ) {
-                        // Real bug, same family as the earlier hardcoded-Tarlac fallback: when
-                        // location genuinely can't be determined, userLat/userLng just sit at
-                        // their initial default value (Tarlac City) since nothing ever assigns
-                        // them in the failure path. Unconditionally drawing a "You are here" dot
-                        // there claimed a location the app had just said, one card below, that it
-                        // didn't actually know.
-                        if (!locationUnavailable) {
-                            Marker(
-                                state = MarkerState(position = LatLng(userLat, userLng)),
-                                title = "You are here",
-                                icon = userDotIcon
-                            )
-                        }
-                        clinics.forEach { clinic ->
-                            val routePoints = routes[clinic.name]?.points
-                                ?: listOf(LatLng(userLat, userLng), LatLng(clinic.lat, clinic.lng))
-                            Polyline(points = routePoints, color = Color(0xFF7C3AED), width = 8f)
-                            Marker(
-                                state = MarkerState(position = LatLng(clinic.lat, clinic.lng)),
-                                title = clinic.name,
-                                snippet = clinic.address,
-                                icon = markerIcon,
-                                onClick = { selectedClinic = clinic; true }
-                            )
-                        }
-                    }
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(end = 12.dp, bottom = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Card(
-                            modifier = Modifier.size(40.dp).clickable {
-                                mapScope.launch { cameraPositionState.animate(com.google.android.gms.maps.CameraUpdateFactory.zoomIn()) }
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color.White),
-                            elevation = CardDefaults.cardElevation(4.dp)
-                        ) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Add, contentDescription = "Zoom in", tint = DermaGreen, modifier = Modifier.size(20.dp))
-                            }
-                        }
-                        Card(
-                            modifier = Modifier.size(40.dp).clickable {
-                                mapScope.launch { cameraPositionState.animate(com.google.android.gms.maps.CameraUpdateFactory.zoomOut()) }
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color.White),
-                            elevation = CardDefaults.cardElevation(4.dp)
-                        ) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Remove, contentDescription = "Zoom out", tint = DermaGreen, modifier = Modifier.size(20.dp))
-                            }
+                // A tapped pin frames you and that clinic together, and brings its card into view
+                // in the sheet so the map and the list agree on which clinic is in focus.
+                LaunchedEffect(focusedClinic) {
+                    val clinic = focusedClinic ?: return@LaunchedEffect
+                    val index = clinics.indexOf(clinic)
+                    // Before the camera move, not alongside it -- run concurrently, a long scroll
+                    // to a far-down card was getting cut off partway.
+                    if (index >= 0) sheetListState.animateScrollToItem(itemsBeforeClinics + index)
+                    if (!locationUnavailable) {
+                        val bounds = LatLngBounds.builder()
+                            .include(LatLng(userLat, userLng))
+                            .include(LatLng(clinic.lat, clinic.lng))
+                            .build()
+                        try {
+                            cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 160))
+                        } catch (e: IllegalStateException) {
+                            // Map not laid out yet -- the route still draws, just without re-framing.
                         }
                     }
                 }
 
-                // Clinic cards below map
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                BottomSheetScaffold(
+                    // The sheet is taller than the space above the tab bar; clip it so the hidden
+                    // part doesn't show through below the bar.
+                    modifier = Modifier.clipToBounds(),
+                    sheetPeekHeight = CLINIC_SHEET_PEEK,
+                    sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                    sheetContainerColor = DermaPageBackground,
+                    sheetShadowElevation = 12.dp,
+                    sheetContent = {
+                        ClinicListHeader(locationLabel = locationLabel, isLoading = isLoading, clinicCount = clinics.size)
+                        LazyColumn(
+                            state = sheetListState,
+                            modifier = Modifier.fillMaxWidth().fillMaxHeight(),
+                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            clinicStatusItems()
+                            itemsIndexed(clinics) { index, clinic ->
+                                val card = @Composable {
+                                    CompactClinicCard(
+                                        clinic = clinic,
+                                        route = routes[clinic.name],
+                                        selected = clinic == focusedClinic,
+                                        onClick = { focusedClinic = clinic; selectedClinic = clinic }
+                                    )
+                                }
+                                // Only the cards on screen at open get the entrance animation: it
+                                // starts each card at zero height, so cards further down -- first
+                                // composed mid-scroll when a far pin is tapped -- would grow in after
+                                // the scroll lands and push the tapped clinic's card back out of view.
+                                if (index < 6) EntranceAnimation(delayMillis = index * 60) { card() } else card()
+                            }
+                        }
+                    }
                 ) {
-                    item {
-                        Text("Nearby Dermatology Clinics", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1a1a1a))
-                        Spacer(modifier = Modifier.height(4.dp))
-                    }
-                    if (!isLoading && isOffline) {
-                        item { OfflineClinicsState(onRetry = { retryTrigger++ }, onBackToHome = { navController.popBackStack() }) }
-                    } else if (!isLoading && locationUnavailable) {
-                        item {
-                            OfflineClinicsState(
-                                onRetry = { if (locationPermanentlyDenied) openAppSettings() else retryTrigger++ },
-                                onBackToHome = { navController.popBackStack() },
-                                icon = Icons.Default.LocationOff,
-                                title = "Couldn't Determine Your Location",
-                                message = if (locationPermanentlyDenied)
-                                    "Location access was denied and can no longer be requested from within the app. Enable it from Settings to find clinics near you."
-                                else
-                                    "Make sure location services (GPS) are turned on for your device, then retry. This isn't the same as camera or app permissions -- it's a separate system setting.",
-                                retryLabel = if (locationPermanentlyDenied) "Open Settings" else "Retry"
-                            )
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        GoogleMap(
+                            modifier = Modifier.fillMaxSize(),
+                            cameraPositionState = cameraPositionState,
+                            // Keeps centering/framing inside the strip the sheet and toggle leave visible.
+                            contentPadding = PaddingValues(top = topControls, bottom = CLINIC_SHEET_PEEK),
+                            uiSettings = MapUiSettings(zoomControlsEnabled = false, myLocationButtonEnabled = false),
+                            onMapClick = { focusedClinic = null }
+                        ) {
+                            // Real bug, same family as the earlier hardcoded-Tarlac fallback: when
+                            // location genuinely can't be determined, userLat/userLng just sit at
+                            // their initial default value (Tarlac City) since nothing ever assigns
+                            // them in the failure path. Unconditionally drawing a "You are here" dot
+                            // there claimed a location the app had just said, one card below, that it
+                            // didn't actually know.
+                            if (!locationUnavailable) {
+                                Marker(
+                                    state = MarkerState(position = LatLng(userLat, userLng)),
+                                    title = "You are here",
+                                    icon = userDotIcon
+                                )
+                            }
+                            // Only the clinic in focus gets a route -- twenty overlapping lines at
+                            // once read as noise rather than directions.
+                            focusedClinic?.let { clinic ->
+                                val routePoints = routes[clinic.name]?.points
+                                    ?: listOf(LatLng(userLat, userLng), LatLng(clinic.lat, clinic.lng))
+                                Polyline(points = routePoints, color = Color(0xFF7C3AED), width = 10f)
+                            }
+                            clinics.forEach { clinic ->
+                                val pinIcon = markerIcons[clinic.openNow]?.let { if (clinic == focusedClinic) it.second else it.first }
+                                Marker(
+                                    state = MarkerState(position = LatLng(clinic.lat, clinic.lng)),
+                                    title = clinic.name,
+                                    snippet = clinic.address,
+                                    icon = pinIcon?.first,
+                                    anchor = Offset(0.5f, pinIcon?.second ?: 1f),
+                                    zIndex = if (clinic == focusedClinic) 1f else 0f,
+                                    onClick = { focusedClinic = clinic; true }
+                                )
+                            }
                         }
-                    } else if (!isLoading && clinics.isEmpty()) {
-                        item { EmptyClinicsState() }
-                    }
-                    itemsIndexed(clinics) { index, clinic ->
-                        EntranceAnimation(delayMillis = index.coerceAtMost(6) * 60) {
-                            CompactClinicCard(clinic = clinic, route = routes[clinic.name], onClick = { selectedClinic = clinic })
+                        Column(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = topControls, end = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            MapZoomButton(Icons.Default.Add, "Zoom in") {
+                                mapScope.launch { cameraPositionState.animate(CameraUpdateFactory.zoomIn()) }
+                            }
+                            MapZoomButton(Icons.Default.Remove, "Zoom out") {
+                                mapScope.launch { cameraPositionState.animate(CameraUpdateFactory.zoomOut()) }
+                            }
+                        }
+                        // Routes only draw for the tapped pin, so say so -- otherwise the map looks
+                        // like it simply has no directions.
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = focusedClinic == null && clinics.isNotEmpty(),
+                            enter = fadeIn(tween(250)),
+                            exit = fadeOut(tween(200)),
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = CLINIC_SHEET_PEEK + 16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .shadow(6.dp, RoundedCornerShape(50))
+                                    .background(Color(0xFF1F2937), RoundedCornerShape(50))
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.TouchApp, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Tap a pin to see its route", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                            }
                         }
                     }
-                }
                 }
             } else {
-                // List View
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    if (!isLoading && isOffline) {
-                        item { OfflineClinicsState(onRetry = { retryTrigger++ }, onBackToHome = { navController.popBackStack() }) }
-                    } else if (!isLoading && locationUnavailable) {
-                        item {
-                            OfflineClinicsState(
-                                onRetry = { if (locationPermanentlyDenied) openAppSettings() else retryTrigger++ },
-                                onBackToHome = { navController.popBackStack() },
-                                icon = Icons.Default.LocationOff,
-                                title = "Couldn't Determine Your Location",
-                                message = if (locationPermanentlyDenied)
-                                    "Location access was denied and can no longer be requested from within the app. Enable it from Settings to find clinics near you."
-                                else
-                                    "Make sure location services (GPS) are turned on for your device, then retry. This isn't the same as camera or app permissions -- it's a separate system setting.",
-                                retryLabel = if (locationPermanentlyDenied) "Open Settings" else "Retry"
-                            )
-                        }
-                    } else if (!isLoading && clinics.isEmpty()) {
-                        item { EmptyClinicsState() }
-                    }
-                    itemsIndexed(clinics) { index, clinic ->
-                        EntranceAnimation(delayMillis = index.coerceAtMost(6) * 60) {
-                            FullClinicCard(clinic = clinic, route = routes[clinic.name], onClick = { selectedClinic = clinic })
+                Column(modifier = Modifier.fillMaxSize().padding(top = topControls)) {
+                    ClinicListHeader(locationLabel = locationLabel, isLoading = isLoading, clinicCount = clinics.size)
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        clinicStatusItems()
+                        itemsIndexed(clinics) { index, clinic ->
+                            EntranceAnimation(delayMillis = index.coerceAtMost(6) * 60) {
+                                FullClinicCard(clinic = clinic, route = routes[clinic.name], onClick = { focusedClinic = clinic; selectedClinic = clinic })
+                            }
                         }
                     }
                 }
             }
+            }
+
+            // Floating controls: round back button + Map/List pill
+            Box(
+                modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(modifier = Modifier.align(Alignment.CenterStart)) {
+                    RoundIconButton(icon = Icons.Default.ArrowBack, contentDescription = "Go back", onClick = { navController.popBackStack() })
+                }
+                MapListToggle(showMap = showMap, onChange = { showMap = it })
             }
         }
     }
 
     selectedClinic?.let { clinic ->
-        AlertDialog(
+        DermaAlertDialog(
             onDismissRequest = { selectedClinic = null },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(DermaGreenLight), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.LocalHospital, contentDescription = null, tint = DermaGreen, modifier = Modifier.size(22.dp))
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(clinic.name, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    ClinicIconTile(size = 44.dp)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(clinic.name, fontSize = 16.sp, fontWeight = FontWeight.Bold, lineHeight = 21.sp)
                 }
             },
             text = {
@@ -872,7 +925,7 @@ fun ClinicLocatorScreen(navController: NavController) {
                     // Google's side well before Google's own data reflects it).
                     if (clinic.placeId.isNotEmpty()) {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = Color(0xFFF3F4F6))
-                        Text("Still open? Help others by confirming.", fontSize = 12.sp, color = Color(0xFF6B7280))
+                        Text("Still open? Help others by confirming.", fontSize = 12.sp, color = DermaSubtle)
                         Spacer(modifier = Modifier.height(8.dp))
                         val tally = voteTally
                         if (tally == null) {
@@ -894,14 +947,14 @@ fun ClinicLocatorScreen(navController: NavController) {
                                 VoteChip(
                                     label = "Still open (${tally.confirmedOpenCount})",
                                     selected = tally.myVote == "open",
-                                    selectedColor = Color(0xFF16A34A),
+                                    selectedColor = DermaSuccess,
                                     enabled = !isVoting,
                                     onClick = { castVote("open") }
                                 )
                                 VoteChip(
                                     label = "Closed (${tally.confirmedClosedCount})",
                                     selected = tally.myVote == "closed",
-                                    selectedColor = Color(0xFFDC2626),
+                                    selectedColor = DermaDanger,
                                     enabled = !isVoting,
                                     onClick = { castVote("closed") }
                                 )
@@ -911,8 +964,8 @@ fun ClinicLocatorScreen(navController: NavController) {
                 }
             },
             confirmButton = {
-                Button(onClick = { selectedClinic = null }, colors = ButtonDefaults.buttonColors(containerColor = DermaGreen), shape = RoundedCornerShape(8.dp)) {
-                    Text("Close")
+                Button(onClick = { selectedClinic = null }, colors = ButtonDefaults.buttonColors(containerColor = DermaGreen), shape = RoundedCornerShape(50)) {
+                    Text("Close", fontWeight = FontWeight.SemiBold)
                 }
             },
             // Google's own index can be stale for a specific branch even when nothing about the
@@ -936,11 +989,11 @@ fun ClinicLocatorScreen(navController: NavController) {
                         )
                         context.startActivity(intent)
                     }) {
-                        Text("Report incorrect info", color = Color(0xFF6B7280), fontSize = 12.sp)
+                        Text("Report incorrect info", color = DermaSubtle, fontSize = 12.sp)
                     }
                 }
             } else null,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(28.dp),
             containerColor = Color.White,
             titleContentColor = Color(0xFF111827),
             textContentColor = Color(0xFF374151)
@@ -957,18 +1010,13 @@ fun OfflineClinicsState(
     message: String = "The clinic locator requires an internet connection to find nearby dermatology clinics and get real-time information.",
     retryLabel: String = "Retry"
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(2.dp)
-    ) {
+    SoftCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(Color(0xFFF3F4F6)), contentAlignment = Alignment.Center) {
-                Icon(icon, contentDescription = null, tint = Color(0xFF6B7280), modifier = Modifier.size(28.dp))
+            Box(modifier = Modifier.size(60.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFFF3F4F6)), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = DermaSubtle, modifier = Modifier.size(28.dp))
             }
             Spacer(modifier = Modifier.height(14.dp))
             Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1a1a1a))
@@ -980,17 +1028,10 @@ fun OfflineClinicsState(
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             Spacer(modifier = Modifier.height(16.dp))
-            Button(
-                onClick = onRetry,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = DermaGreen),
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Text(retryLabel)
-            }
-            Spacer(modifier = Modifier.height(8.dp))
+            PillButton(text = retryLabel, elevated = true, height = 48.dp, onClick = onRetry)
+            Spacer(modifier = Modifier.height(6.dp))
             TextButton(onClick = onBackToHome) {
-                Text("Back to Home", color = Color.Gray)
+                Text("Back to Home", color = DermaSubtle)
             }
         }
     }
@@ -998,17 +1039,12 @@ fun OfflineClinicsState(
 
 @Composable
 fun EmptyClinicsState() {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(2.dp)
-    ) {
+    SoftCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(DermaGreenLight), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.size(60.dp).clip(RoundedCornerShape(18.dp)).background(DermaGreenLight), contentAlignment = Alignment.Center) {
                 Icon(Icons.Default.LocationOff, contentDescription = null, tint = DermaGreen, modifier = Modifier.size(28.dp))
             }
             Spacer(modifier = Modifier.height(14.dp))
@@ -1024,75 +1060,94 @@ fun EmptyClinicsState() {
     }
 }
 
+/** Rounded-square tile with a medical cross, the clinic's icon throughout this screen. */
 @Composable
-fun CompactClinicCard(clinic: Clinic, route: RouteInfo? = null, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(2.dp)
+private fun ClinicIconTile(size: androidx.compose.ui.unit.Dp = 44.dp) {
+    Box(
+        modifier = Modifier.size(size).clip(RoundedCornerShape(size * 0.3f)).background(DermaGreenLight),
+        contentAlignment = Alignment.Center
     ) {
-        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(DermaGreenLight), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.LocalHospital, contentDescription = null, tint = DermaGreen, modifier = Modifier.size(22.dp))
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(clinic.name, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1a1a1a))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(clinicDistanceLabel(clinic, route), fontSize = 12.sp, color = Color.Gray)
-                    Text(" · ", fontSize = 12.sp, color = Color.Gray)
-                    Icon(Icons.Default.AccessTime, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(12.dp))
-                    Spacer(modifier = Modifier.width(2.dp))
-                    Text(todaysHoursLine(clinic.hours), fontSize = 12.sp, color = Color.Gray, maxLines = 1)
-                }
-            }
-            val status = openStatus(clinic.openNow)
-            Box(modifier = Modifier.background(status.background, RoundedCornerShape(20.dp)).padding(horizontal = 8.dp, vertical = 4.dp)) {
-                Text(status.shortLabel, fontSize = 11.sp, color = status.textColor, fontWeight = FontWeight.SemiBold)
-            }
+        Icon(Icons.Outlined.LocalHospital, contentDescription = null, tint = DermaGreen, modifier = Modifier.size(size * 0.52f))
+    }
+}
+
+/** Small status label: coloured dot + "Open" / "Closed" / "Hours unknown". */
+@Composable
+private fun StatusPill(openNow: Boolean?, short: Boolean) {
+    val status = openStatus(openNow)
+    Row(
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(status.background).padding(horizontal = 9.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(status.textColor))
+        Spacer(modifier = Modifier.width(5.dp))
+        Text(if (short) status.shortLabel else status.label, fontSize = 11.sp, color = status.textColor, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+fun CompactClinicCard(clinic: Clinic, route: RouteInfo? = null, selected: Boolean = false, onClick: () -> Unit) {
+    val settings = LocalAppSettings.current
+    val shape = RoundedCornerShape(20.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(if (selected) 0.dp else 8.dp, shape, ambientColor = Color(0x1A4C1D95), spotColor = Color(0x1A4C1D95))
+            .clip(shape)
+            .background(if (selected) Color(0xFFF5F3FF) else Color.White)
+            .then(if (selected) Modifier.border(2.dp, DermaGreen, shape) else Modifier)
+            .clickable { onClick() }
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ClinicIconTile(size = 44.dp)
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(clinic.name, fontSize = settings.textMd.sp, fontWeight = FontWeight.Bold, color = Color(0xFF111827), maxLines = 2, lineHeight = TextUnit.Unspecified)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                "${clinicDistanceLabel(clinic, route)} · ${todaysHoursLine(clinic.hours)}",
+                fontSize = settings.textBase.sp,
+                color = DermaSubtle,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
         }
+        Spacer(modifier = Modifier.width(8.dp))
+        StatusPill(clinic.openNow, short = true)
     }
 }
 
 @Composable
 fun FullClinicCard(clinic: Clinic, route: RouteInfo? = null, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(2.dp)
-    ) {
+    val settings = LocalAppSettings.current
+    SoftCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(DermaGreenLight), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.LocalHospital, contentDescription = null, tint = DermaGreen, modifier = Modifier.size(26.dp))
-                }
+                ClinicIconTile(size = 48.dp)
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(clinic.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1a1a1a))
-                    Text(clinic.address, fontSize = 12.sp, color = Color.Gray)
+                    Text(clinic.name, fontSize = settings.textLg.sp, fontWeight = FontWeight.Bold, color = Color(0xFF111827), lineHeight = TextUnit.Unspecified)
+                    Text(clinic.address, fontSize = settings.textBase.sp, color = DermaSubtle, lineHeight = TextUnit.Unspecified)
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(modifier = Modifier.background(Color(0xFFF0F0F0), RoundedCornerShape(20.dp)).padding(horizontal = 10.dp, vertical = 4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.LocationOn, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(clinicDistanceLabel(clinic, route), fontSize = 12.sp, color = Color.Gray)
-                    }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(Color(0xFFF3F4F6)).padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.LocationOn, contentDescription = null, tint = DermaSubtle, modifier = Modifier.size(13.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(clinicDistanceLabel(clinic, route), fontSize = settings.textBase.sp, color = Color(0xFF4B5563))
                 }
-                val status = openStatus(clinic.openNow)
-                Box(modifier = Modifier.background(status.background, RoundedCornerShape(20.dp)).padding(horizontal = 10.dp, vertical = 4.dp)) {
-                    Text(status.label, fontSize = 12.sp, color = status.textColor, fontWeight = FontWeight.SemiBold)
-                }
+                StatusPill(clinic.openNow, short = false)
             }
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.AccessTime, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(14.dp))
+                Icon(Icons.Default.AccessTime, contentDescription = null, tint = DermaMuted, modifier = Modifier.size(14.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(todaysHoursLine(clinic.hours), fontSize = 12.sp, color = Color.Gray, maxLines = 1)
+                Text(todaysHoursLine(clinic.hours), fontSize = settings.textBase.sp, color = DermaSubtle, maxLines = 1)
             }
         }
     }
@@ -1101,9 +1156,108 @@ fun FullClinicCard(clinic: Clinic, route: RouteInfo? = null, onClick: () -> Unit
 private data class OpenStatus(val label: String, val shortLabel: String, val textColor: Color, val background: Color)
 
 private fun openStatus(openNow: Boolean?) = when (openNow) {
-    true -> OpenStatus("Open Now", "Open", Color(0xFF2E7D32), Color(0xFFE8F5E9))
-    false -> OpenStatus("Closed", "Closed", Color(0xFFC62828), Color(0xFFFFEBEE))
-    null -> OpenStatus("Hours unknown", "Hours unknown", Color(0xFF6B7280), Color(0xFFF3F4F6))
+    true -> OpenStatus("Open Now", "Open", if (ContrastMode.highContrast) Color(0xFF14532D) else Color(0xFF2E7D32), Color(0xFFE8F5E9))
+    false -> OpenStatus("Closed", "Closed", if (ContrastMode.highContrast) Color(0xFF7F1D1D) else Color(0xFFC62828), Color(0xFFFFEBEE))
+    null -> OpenStatus("Hours unknown", "Hours unknown", DermaSubtle, Color(0xFFF3F4F6))
+}
+
+/** How much of the clinic sheet shows over the map before it's dragged up. */
+private val CLINIC_SHEET_PEEK = 340.dp
+
+/** Floating "Map View | List View" pill -- the one switch between the two layouts. */
+@Composable
+fun MapListToggle(showMap: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .shadow(6.dp, RoundedCornerShape(50))
+            .background(Color.White, RoundedCornerShape(50))
+            .padding(4.dp)
+    ) {
+        listOf(true to "Map View", false to "List View").forEach { (isMap, label) ->
+            val active = showMap == isMap
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(if (active) DermaGreen else Color.Transparent)
+                    .clickable { onChange(isMap) }
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    if (isMap) Icons.Default.Map else Icons.Default.List,
+                    contentDescription = null,
+                    tint = if (active) Color.White else DermaSubtle,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (active) Color.White else DermaSubtle)
+            }
+        }
+    }
+}
+
+@Composable
+fun ClinicListHeader(locationLabel: String, isLoading: Boolean, clinicCount: Int) {
+    val settings = LocalAppSettings.current
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Nearby Dermatology Clinics", fontSize = settings.textLg.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1a1a1a))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.LocationOn, contentDescription = null, tint = DermaGreen, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(locationLabel, fontSize = settings.textBase.sp, color = DermaSubtle, maxLines = 1)
+            }
+        }
+        Box(modifier = Modifier.background(DermaGreenLight, RoundedCornerShape(20.dp)).padding(horizontal = 12.dp, vertical = 4.dp)) {
+            if (isLoading) {
+                CircularProgressIndicator(color = DermaGreen, modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+            } else {
+                Text("$clinicCount found", fontSize = settings.textBase.sp, color = DermaGreen, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+@Composable
+fun MapZoomButton(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .shadow(8.dp, CircleShape, ambientColor = Color(0x334C1D95), spotColor = Color(0x334C1D95))
+            .clip(CircleShape)
+            .background(Color.White)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = description, tint = DermaGreen, modifier = Modifier.size(20.dp))
+    }
+}
+
+@Composable
+fun LocationPermissionBanner(permanentlyDenied: Boolean, onAllow: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.LocationOff, contentDescription = null, tint = Color(0xFFE65100), modifier = Modifier.size(24.dp))
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Location access needed", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE65100))
+                Text(
+                    if (permanentlyDenied) "Enable it from Settings to find clinics near you" else "Enable location to find clinics near you",
+                    fontSize = 12.sp, color = Color(0xFFE65100)
+                )
+            }
+            TextButton(onClick = onAllow) {
+                Text(if (permanentlyDenied) "Open Settings" else "Allow", color = DermaGreen, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
 }
 
 @Composable

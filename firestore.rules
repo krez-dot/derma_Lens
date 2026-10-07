@@ -22,6 +22,13 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Writes need a verified email, so throwaway accounts made by a script can't vote or store
+    // data. Google sign-in tokens are verified already; email/password accounts become verified
+    // once the link in the verification email is opened (the app refreshes its token right after).
+    function verified() {
+      return signedIn() && request.auth.token.email_verified == true;
+    }
+
     function statusPath(placeId) {
       return /databases/$(database)/documents/clinic_status/$(placeId);
     }
@@ -65,7 +72,7 @@ service cloud.firestore {
     match /clinic_status/{placeId} {
       allow read: if signedIn();
 
-      allow create, update: if signedIn()
+      allow create, update: if verified()
         && request.resource.data.keys().hasOnly(['confirmedOpenCount', 'confirmedClosedCount'])
         && request.resource.data.get('confirmedOpenCount', 0) is int
         && request.resource.data.get('confirmedClosedCount', 0) is int
@@ -78,13 +85,13 @@ service cloud.firestore {
       match /votes/{uid} {
         allow read: if signedIn() && request.auth.uid == uid;
 
-        allow create, update: if signedIn() && request.auth.uid == uid
+        allow create, update: if verified() && request.auth.uid == uid
           && request.resource.data.keys().hasOnly(['vote', 'votedAt'])
           && request.resource.data.vote in ['open', 'closed']
           && request.resource.data.votedAt == request.time
           && countsMatchMyVoteChange(placeId);
 
-        allow delete: if signedIn() && request.auth.uid == uid
+        allow delete: if verified() && request.auth.uid == uid
           && countsMatchMyVoteChange(placeId);
       }
     }
@@ -94,9 +101,13 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    function isVerifiedOwner(uid) {
+      return verified() && request.auth.uid == uid;
+    }
+
     match /users/{uid} {
       allow read, delete: if isOwner(uid);
-      allow create, update: if isOwner(uid)
+      allow create, update: if isVerifiedOwner(uid)
         && request.resource.data.keys().hasOnly(['syncEnabled', 'updatedAt'])
         && request.resource.data.syncEnabled is bool
         && request.resource.data.updatedAt == request.time;
@@ -105,7 +116,7 @@ service cloud.firestore {
         allow read, delete: if isOwner(uid);
         // The doc id must be the scan's own timestamp (the cross-device key). A tombstone
         // (deleted == true) may carry nothing but the timestamp -- no health data survives a delete.
-        allow create, update: if isOwner(uid)
+        allow create, update: if isVerifiedOwner(uid)
           && request.resource.data.scanDate is int
           && scanId == string(request.resource.data.scanDate)
           && request.resource.data.deleted is bool

@@ -47,9 +47,9 @@ data class FamilyTree(
  * see training/acne_subtypes_future/README.md); this reuses that same clinical research as
  * education instead, which doesn't have that accuracy risk.
  *
- * IMPORTANT: this content needs a real accuracy pass before shipping -- drafted from general
- * dermatological knowledge, not sourced from a clinical reference per-line. Same bar as everything
- * else in this app that makes a medical claim.
+ * The subtypes and look-alikes listed here are backed by the references in [familyTreeSources]
+ * (ConditionSources.kt, checked 2026-10-05), which the screen shows under each tree. The free-text
+ * descriptions are still plain-language summaries -- keep them consistent with those references.
  */
 val familyTrees: Map<String, FamilyTree> = mapOf(
     "Acne Vulgaris" to FamilyTree(
@@ -63,9 +63,9 @@ val familyTrees: Map<String, FamilyTree> = mapOf(
         )
     ),
     "Eczema" to FamilyTree(
-        groupingNote = "\"Eczema\" is the everyday name for atopic dermatitis specifically, but it's also used loosely for a group of conditions that all cause dry, inflamed, itchy skin through different triggers.",
+        groupingNote = "\"Eczema\" is the everyday name for a group of conditions that all cause dry, inflamed, itchy skin, each through a different trigger.",
         relatives = listOf(
-            FamilyTreeRelative("Atopic Dermatitis", "The most common form -- a chronic condition linked to an overactive immune response, often runs with allergies/asthma.", "Dry, itchy, red patches in skin folds (elbows, knees), often since childhood.", LesionIconType.SCALE_PATCH),
+            FamilyTreeRelative("Classic Eczema", "The most common form -- a chronic condition linked to an overactive immune response, often runs with allergies/asthma.", "Dry, itchy, red patches in skin folds (elbows, knees), often since childhood.", LesionIconType.SCALE_PATCH),
             FamilyTreeRelative("Contact Dermatitis", "A reaction where skin actually touched something irritating or allergenic (soap, metal, a plant).", "Redness/rash confined to where contact happened, often with a clear edge or shape matching the trigger.", LesionIconType.SCALE_PATCH),
             FamilyTreeRelative("Seborrheic Dermatitis", "Linked to oil-producing skin areas and a common yeast that lives on skin -- what causes dandruff.", "Greasy, flaking, yellowish scale on the scalp, face (around nose/eyebrows), or chest.", LesionIconType.SCALE_PATCH),
             FamilyTreeRelative("Dyshidrotic Eczema", "Small, intensely itchy blisters, cause not fully understood -- often stress- or sweat-related.", "Tiny fluid-filled blisters specifically on the palms, sides of fingers, or soles.", LesionIconType.PALE_BUMP),
