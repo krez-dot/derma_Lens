@@ -47,9 +47,9 @@ data class FamilyTree(
  * see training/acne_subtypes_future/README.md); this reuses that same clinical research as
  * education instead, which doesn't have that accuracy risk.
  *
- * IMPORTANT: this content needs a real accuracy pass before shipping -- drafted from general
- * dermatological knowledge, not sourced from a clinical reference per-line. Same bar as everything
- * else in this app that makes a medical claim.
+ * The subtypes and look-alikes listed here are backed by the references in [familyTreeSources]
+ * (ConditionSources.kt, checked 2026-10-05), which the screen shows under each tree. The free-text
+ * descriptions are still plain-language summaries -- keep them consistent with those references.
  */
 val familyTrees: Map<String, FamilyTree> = mapOf(
     "Acne Vulgaris" to FamilyTree(

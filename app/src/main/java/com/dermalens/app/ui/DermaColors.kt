@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.shadow
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.foundation.border
 import androidx.compose.material3.Card
@@ -120,9 +122,15 @@ fun EntranceAnimation(delayMillis: Int = 0, content: @Composable () -> Unit) {
  * Shared "not a diagnosis" banner shown at the top of every main screen that displays
  * health-related content. Deliberately bold/high-contrast (not a muted footnote) so it's one
  * of the first things a user notices, not something that blends into the rest of the page.
+ * [asGuide] swaps in a card-styled "Best used as a guide" note -- used where a result is
+ * made or shown, laid out like the result screen's cards (icon tile + title, text below).
  */
 @Composable
-fun DiagnosticAidDisclaimer(modifier: Modifier = Modifier) {
+fun DiagnosticAidDisclaimer(modifier: Modifier = Modifier, asGuide: Boolean = false) {
+    if (asGuide) {
+        GuideCard(modifier)
+        return
+    }
     val settings = LocalAppSettings.current
     val shape = RoundedCornerShape(18.dp)
     Row(
@@ -142,6 +150,39 @@ fun DiagnosticAidDisclaimer(modifier: Modifier = Modifier) {
             fontWeight = FontWeight.SemiBold,
             color = DermaWarningText,
             lineHeight = (settings.textBase * 1.4f).sp
+        )
+    }
+}
+
+/** Amber note card matching the result screen's info cards: icon tile and title, text below. */
+@Composable
+private fun GuideCard(modifier: Modifier = Modifier) {
+    val settings = LocalAppSettings.current
+    val shape = RoundedCornerShape(24.dp)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Color(0xFFFFF8EB))
+            .border(1.dp, if (settings.highContrast) DermaWarningText else Color(0xFFFCE3B4), shape)
+            .padding(18.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFFDE7C2)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Outlined.Explore, contentDescription = null, tint = Color(0xFFB45309), modifier = Modifier.size(21.dp))
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Text("Best used as a guide", fontSize = settings.textLg.sp, fontWeight = FontWeight.SemiBold, color = DermaWarningText)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            "The detection model gives an estimate, not a diagnosis. Always consult a dermatologist for professional advice.",
+            fontSize = settings.textMd.sp,
+            color = DermaWarningText,
+            lineHeight = (settings.textMd * 1.5f).sp
         )
     }
 }

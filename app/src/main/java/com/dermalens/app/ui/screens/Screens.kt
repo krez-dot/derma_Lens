@@ -723,7 +723,14 @@ fun VerifyEmailScreen(navController: NavController) {
                                     apply()
                                 }
                                 NewUserSignal.pendingContributePrompt = true
-                                navController.navigate(Screen.Home.route) { popUpTo(Screen.VerifyEmail.route) { inclusive = true } }
+                                // Firestore rules require email_verified, but the cached ID token
+                                // still says false until it refreshes (up to an hour) -- force a
+                                // fresh one first so votes and backup work right away.
+                                isChecking = true
+                                firebaseUser.getIdToken(true).addOnCompleteListener {
+                                    isChecking = false
+                                    navController.navigate(Screen.Home.route) { popUpTo(Screen.VerifyEmail.route) { inclusive = true } }
+                                }
                             } else {
                                 errorMessage = "Still not verified — tap the link in the email first."
                             }

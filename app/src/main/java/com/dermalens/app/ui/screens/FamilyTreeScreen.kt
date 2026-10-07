@@ -225,6 +225,14 @@ fun FamilyTreeScreen(navController: NavController, condition: String) {
                     }
                 }
             }
+
+            familyTreeSources[condition]?.let { sources ->
+                item {
+                    SoftCard(modifier = Modifier.fillMaxWidth()) {
+                        SourcesList(sources, modifier = Modifier.padding(16.dp))
+                    }
+                }
+            }
         }
     }
 }

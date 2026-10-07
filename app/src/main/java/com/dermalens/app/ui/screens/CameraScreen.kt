@@ -398,7 +398,14 @@ fun CameraPreviewScreen(navController: NavController, continueTrackGroupId: Int 
                                         )
                                     }
                                     isScanning = false
-                                    navController.navigate(Screen.ScanResult.createRoute((croppedUri ?: galleryUri).toString(), continueTrackGroupId = continueTrackGroupId))
+                                    // Never fall back to the original gallery file: unlike the
+                                    // re-encoded crop, it can still carry EXIF (GPS location, device),
+                                    // which would then be saved and possibly contributed.
+                                    if (croppedUri == null) {
+                                        android.widget.Toast.makeText(context, "Couldn't read this photo. Please try another one.", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        navController.navigate(Screen.ScanResult.createRoute(croppedUri.toString(), continueTrackGroupId = continueTrackGroupId))
+                                    }
                                 }
                             } else {
                                 val capture = imageCapture
@@ -587,7 +594,7 @@ fun CameraPreviewScreen(navController: NavController, continueTrackGroupId: Int 
 
             Spacer(modifier = Modifier.height(16.dp))
             Box(modifier = Modifier.padding(horizontal = 20.dp)) {
-                DiagnosticAidDisclaimer()
+                DiagnosticAidDisclaimer(asGuide = true)
             }
         }
     }

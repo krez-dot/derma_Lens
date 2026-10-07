@@ -36,6 +36,13 @@
 var ROOT_FOLDER_NAME = "DermaLens Contributions";
 var UNCATEGORIZED_FOLDER_NAME = "Uncategorized";
 
+// The shared secret ships inside the app, so anyone who unpacks the APK can call this endpoint.
+// These checks limit what such a caller could do to your Drive: only these folder names, only
+// real JPEGs, nothing huge, and file names chosen here rather than by the caller.
+var ALLOWED_CONDITIONS = ["Acne Vulgaris", "Eczema", "Melasma", "Tinea", "Warts", "Scabies"];
+var MAX_IMAGE_BYTES = 5 * 1024 * 1024; // app uploads are ~60 KB crops; 5 MB leaves lots of room
+var MAX_BASE64_LENGTH = Math.ceil(MAX_IMAGE_BYTES / 3) * 4;
+
 function doPost(e) {
   try {
     var body = JSON.parse(e.postData.contents);
@@ -44,18 +51,30 @@ function doPost(e) {
     if (!expectedSecret || body.secret !== expectedSecret) {
       return jsonResponse({ status: "error", message: "unauthorized" });
     }
-    if (!body.imageBase64 || !body.filename) {
-      return jsonResponse({ status: "error", message: "missing imageBase64 or filename" });
+    if (typeof body.imageBase64 !== "string" || !body.imageBase64) {
+      return jsonResponse({ status: "error", message: "missing imageBase64" });
+    }
+    // Checked before decoding, so an oversized request is rejected without the work of decoding it
+    if (body.imageBase64.length > MAX_BASE64_LENGTH) {
+      return jsonResponse({ status: "error", message: "image too large" });
     }
 
-    var conditionName = (body.condition || "").toString().trim() || UNCATEGORIZED_FOLDER_NAME;
     var bytes = Utilities.base64Decode(body.imageBase64);
-    var blob = Utilities.newBlob(bytes, "image/jpeg", body.filename);
+    // JPEG files start with FF D8 (bytes are signed here, hence -1 and -40)
+    if (bytes.length < 3 || bytes[0] !== -1 || bytes[1] !== -40) {
+      return jsonResponse({ status: "error", message: "not a JPEG image" });
+    }
+
+    var requested = (body.condition || "").toString().trim();
+    var conditionName = ALLOWED_CONDITIONS.indexOf(requested) >= 0 ? requested : UNCATEGORIZED_FOLDER_NAME;
+    var filename = conditionName.replace(/[^A-Za-z0-9]/g, "_") + "_" + Utilities.getUuid() + ".jpg";
+    var blob = Utilities.newBlob(bytes, "image/jpeg", filename);
     getOrCreateConditionFolder(conditionName).createFile(blob);
 
     return jsonResponse({ status: "ok" });
   } catch (err) {
-    return jsonResponse({ status: "error", message: err.toString() });
+    // No internal details back to the caller
+    return jsonResponse({ status: "error", message: "upload failed" });
   }
 }
 

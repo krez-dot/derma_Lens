@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -553,7 +554,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-            DiagnosticAidDisclaimer()
+            DiagnosticAidDisclaimer(asGuide = true)
             Spacer(modifier = Modifier.height(16.dp))
 
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -600,6 +601,26 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                             Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(result.color))
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(symptom, fontSize = settings.textMd.sp, color = Color(0xFF374151))
+                        }
+                    }
+                }
+
+                val causes = conditionCauses[result.condition]
+                if (!result.isLowConfidence && causes != null) {
+                    ResultCard(icon = Icons.Outlined.Science, iconBg = Color(0xFFE0F2FE), iconTint = Color(0xFF0284C7), title = "Possible Causes") {
+                        causes.forEach { cause ->
+                            Row(
+                                modifier = Modifier.padding(vertical = 4.dp).semantics { contentDescription = "Possible cause: $cause" },
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Box(modifier = Modifier.padding(top = 7.dp).size(7.dp).clip(CircleShape).background(result.color))
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(cause, fontSize = settings.textMd.sp, color = Color(0xFF374151), lineHeight = (settings.textMd * 1.45f).sp)
+                            }
+                        }
+                        causeSources[result.condition]?.let { sources ->
+                            Spacer(modifier = Modifier.height(10.dp))
+                            SourcesList(sources)
                         }
                     }
                 }
