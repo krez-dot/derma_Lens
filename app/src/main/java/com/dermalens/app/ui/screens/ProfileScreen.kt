@@ -247,7 +247,7 @@ fun ProfileScreen(navController: NavController) {
             ProfileSectionHeader("About")
             Spacer(modifier = Modifier.height(8.dp))
             ProfileMenuCard {
-                ProfileMenuItem(icon = Icons.Default.Info, iconBg = Color(0xFFEFF6FF), iconTint = Color(0xFF2563EB), title = "About DermaLens", subtitle = "Version 1.0.0 — Capstone 2026", onClick = { showAboutDialog = true })
+                ProfileMenuItem(icon = Icons.Default.Info, iconBg = Color(0xFFEFF6FF), iconTint = Color(0xFF2563EB), title = "About DermaLens", subtitle = "Version ${com.dermalens.app.BuildConfig.VERSION_NAME} — Capstone 2026", onClick = { showAboutDialog = true })
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
                 ProfileMenuItem(icon = Icons.Default.Shield, iconBg = Color(0xFFF0FDF4), iconTint = DermaSuccess, title = "Privacy Policy", subtitle = "How we handle your data", onClick = { showPrivacyDialog = true })
             }
@@ -790,7 +790,7 @@ fun ProfileScreen(navController: NavController) {
             title = { Text("DermaLens", fontWeight = FontWeight.Bold, color = DermaGreen, fontSize = settings.textXl.sp) },
             text = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Version 1.0.0", fontSize = settings.textBase.sp, color = DermaSubtle)
+                    Text("Version ${com.dermalens.app.BuildConfig.VERSION_NAME} (build ${com.dermalens.app.BuildConfig.VERSION_CODE})", fontSize = settings.textBase.sp, color = DermaSubtle)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("An Android-based skin disease detection system using YOLOv11 TFLite. Developed as a Capstone Project at Tarlac State University, 2026.", fontSize = settings.textBase.sp, color = Color(0xFF374151), textAlign = TextAlign.Center, lineHeight = 20.sp)
                     Spacer(modifier = Modifier.height(12.dp))
