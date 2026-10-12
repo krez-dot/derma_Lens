@@ -241,8 +241,10 @@ fun HomeScreen(navController: NavController) {
         // phone, applies deletions/edits made there). Silently skipped offline or when backup is
         // off; the scan list below updates on its own since it observes Room.
         if (user != null) {
-            val restored = com.dermalens.app.data.sync.ScanHistorySync.reconcile(context)
-            if (restored > 0) {
+            // Deliberately not awaited here. This LaunchedEffect dies with the screen, and the
+            // reconcile is a network round-trip -- tapping Scan or Clinics a second after launch
+            // used to cancel it mid-flight and restore nothing, with no sign in the UI.
+            com.dermalens.app.data.sync.ScanHistorySync.reconcileInBackground(context) { restored ->
                 android.widget.Toast.makeText(
                     context,
                     "Restored $restored scan${if (restored == 1) "" else "s"} from your backup",

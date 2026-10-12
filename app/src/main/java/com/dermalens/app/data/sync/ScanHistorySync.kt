@@ -10,7 +10,10 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
@@ -39,6 +42,14 @@ import kotlin.coroutines.resumeWithException
  */
 object ScanHistorySync {
     private const val TAG = "DermaLensSync"
+
+    /**
+     * Outlives any one screen. [reconcile] used to be called straight from Home's LaunchedEffect,
+     * which ties it to that composition -- leave Home before the network round-trip finishes and
+     * the whole restore is cancelled, logging "Sync skipped this round" and silently restoring
+     * nothing. A restore belongs to the app, not to whichever screen happened to start it.
+     */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private fun firestore() = FirebaseFirestore.getInstance()
     private fun userRef(uid: String) = firestore().collection("users").document(uid)
@@ -177,6 +188,19 @@ object ScanHistorySync {
      *
      * Returns how many scans were restored. Never throws: an offline phone just skips this round.
      */
+    /**
+     * Runs [reconcile] on [appScope] so it survives the caller's screen, and reports how many
+     * scans came back on the main thread. Takes applicationContext deliberately -- holding an
+     * Activity in a scope that outlives it is how you leak one.
+     */
+    fun reconcileInBackground(context: Context, onRestored: (Int) -> Unit = {}) {
+        val appContext = context.applicationContext
+        appScope.launch {
+            val restored = reconcile(appContext)
+            if (restored > 0) withContext(Dispatchers.Main) { onRestored(restored) }
+        }
+    }
+
     suspend fun reconcile(context: Context): Int = withContext(Dispatchers.IO) {
         try {
             val uid = currentUid() ?: return@withContext 0

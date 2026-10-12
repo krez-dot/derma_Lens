@@ -50,6 +50,7 @@ import com.dermalens.app.ml.analysisFailedResult
 import com.dermalens.app.ml.noConditionResult
 import com.dermalens.app.ml.runYoloInference
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -198,7 +199,13 @@ private suspend fun saveScan(
     // / a fresh Scan tab entry).
     val groupIdForInsert = existingRecord?.trackGroupId ?: continueTrackGroupId
 
-    val id = db.scanRecordDao().insertScan(
+    // Everything from here is NonCancellable. saveScan runs on the screen's own coroutine scope,
+    // so navigating away mid-save cancels it -- and a cancel landing between the insert and
+    // setTrackGroupId below leaves a scan with no timeline group, which the Progress Tracker then
+    // can't place. Narrow window, but the result is a corrupt row rather than lost work, so once
+    // the write starts it finishes.
+    val id = withContext(NonCancellable) {
+    val newId = db.scanRecordDao().insertScan(
         ScanRecord(
             id = existingScanId ?: 0,
             userId = user.userId,
@@ -221,11 +228,13 @@ private suspend fun saveScan(
     // A genuinely new, non-continuing scan has no group yet (groupIdForInsert was null) --
     // becomes the root of its own group using its own freshly-assigned id.
     if (groupIdForInsert == null) {
-        db.scanRecordDao().setTrackGroupId(id, id)
+        db.scanRecordDao().setTrackGroupId(newId, newId)
     }
     // Opt-in cloud backup of the record (never the photo). Fire-and-forget: Firestore queues it
     // while offline, so saving never waits on the network. No-op when backup is off.
-    db.scanRecordDao().getScanById(id)?.let { com.dermalens.app.data.sync.ScanHistorySync.pushScan(context, it) }
+    db.scanRecordDao().getScanById(newId)?.let { com.dermalens.app.data.sync.ScanHistorySync.pushScan(context, it) }
+    newId
+    }
     return id
 }
 
