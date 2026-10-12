@@ -82,9 +82,15 @@ fun isStrongPassword(password: String): Boolean =
  * password-change flow. */
 fun firebaseAuthErrorMessage(e: Exception): String = when (e) {
     is FirebaseAuthWeakPasswordException -> "Password is too weak. Use at least 6 characters."
-    is FirebaseAuthInvalidCredentialsException -> "Incorrect email or password. Please try again."
+    // These two share one message on purpose. Firebase distinguishes "no account for this email"
+    // (InvalidUser) from "that password was wrong" (InvalidCredentials), and showing the
+    // difference lets someone probe an email list to learn which addresses are registered --
+    // they just read which of the two errors comes back. One wording for both means a failed
+    // sign-in says nothing about whether the account exists. The cost is that a genuinely
+    // disabled account also reads as "invalid credentials", which is the accepted trade.
+    is FirebaseAuthInvalidCredentialsException,
+    is FirebaseAuthInvalidUserException -> "Invalid credentials. Please try again."
     is FirebaseAuthUserCollisionException -> "An account with this email already exists."
-    is FirebaseAuthInvalidUserException -> "No account found with this email, or it has been disabled."
     else -> e.localizedMessage ?: "Something went wrong. Please try again."
 }
 
@@ -327,7 +333,11 @@ fun LoginScreen(navController: NavController) {
                         loginError = ""
                         FirebaseAuth.getInstance().sendPasswordResetEmail(email.trim())
                             .addOnSuccessListener { infoMessage = "Password reset email sent to ${email.trim()}." }
-                            .addOnFailureListener { e -> loginError = firebaseAuthErrorMessage(e) }
+                            // Same banner whether or not the address is registered. Reporting
+                            // "no account found" here would hand back exactly the enumeration
+                            // answer the shared sign-in wording above is written to withhold --
+                            // a reset form is the easiest place in any app to probe for it.
+                            .addOnFailureListener { infoMessage = "Password reset email sent to ${email.trim()}." }
                     }
                 }) {
                     Text("Forgot password?", fontSize = settings.textSm.sp, color = DermaGreen, fontWeight = FontWeight.SemiBold)

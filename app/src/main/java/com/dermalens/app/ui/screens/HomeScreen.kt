@@ -486,7 +486,7 @@ private fun LatestScanCard(scan: ScanRecord?, navController: NavController, onSt
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    if (scan != null) {
+                    if (scan != null && scan.condition != NO_CONDITION_FOUND) {
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(50))

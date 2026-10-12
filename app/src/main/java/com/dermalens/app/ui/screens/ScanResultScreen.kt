@@ -47,6 +47,7 @@ import com.dermalens.app.data.model.ScanRecord
 import com.dermalens.app.data.model.User
 import com.dermalens.app.ui.screens.DermaPrefs
 import com.dermalens.app.ml.analysisFailedResult
+import com.dermalens.app.ml.noConditionResult
 import com.dermalens.app.ml.runYoloInference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -65,6 +66,17 @@ val conditionUsualArea = mapOf(
 
 /** A detection box normalized to [0,1] relative to the analyzed image, left/top/right/bottom. */
 data class NormalizedBox(val left: Float, val top: Float, val right: Float, val bottom: Float)
+
+/** Boxes as "left,top,right,bottom;..." for ScanRecord.boundingBoxes. */
+fun encodeBoxes(boxes: List<NormalizedBox>): String =
+    boxes.joinToString(";") { b -> listOf(b.left, b.top, b.right, b.bottom).joinToString(",") { "%.4f".format(java.util.Locale.US, it) } }
+
+/** Inverse of [encodeBoxes]; skips anything malformed rather than failing the whole scan. */
+fun decodeBoxes(encoded: String): List<NormalizedBox> =
+    encoded.split(";").mapNotNull { part ->
+        val v = part.split(",").mapNotNull { it.toFloatOrNull() }
+        if (v.size == 4) NormalizedBox(v[0], v[1], v[2], v[3]) else null
+    }
 
 /** One alternate condition the model considered plausible, ranked below the primary result. */
 data class DifferentialCandidate(
@@ -93,16 +105,26 @@ data class DetectionResult(
     // True when this isn't a real diagnosis, just a below-the-confidence-floor fallback
     // (see YoloDetector.kt). The UI hides the confidence percentage in this case -- showing
     // a number next to "no result" undermines the point of not committing to an answer.
-    val isLowConfidence: Boolean = false
+    val isLowConfidence: Boolean = false,
+    // The model saw nothing on a photo that is mostly skin (see YoloDetector.kt's
+    // noConditionResult). Still isLowConfidence -- it isn't a diagnosis either -- but it's
+    // shown as a positive result instead of a "retake" warning.
+    val isNoCondition: Boolean = false
 )
 
+/** Saved as a scan's condition when the model found none of the 6 conditions on a skin photo. */
+const val NO_CONDITION_FOUND = "No Condition Found"
+
+// Acne Vulgaris symptoms follow the NHS acne page (https://www.nhs.uk/conditions/acne/, checked
+// 2026-10-09): what a person notices, not just lesion types -- the team flagged the old list
+// ("Whiteheads, Blackheads, Papules, Pustules") as lesion names rather than symptoms.
 val mockDetectionResults = listOf(
     // The currently-bundled 6-class model still outputs "Acne Vulgaris" as one label (the acne
     // subtype split below is a standalone experiment, not yet folded into the bundled model -- see
     // training/acne_subtypes_future and train_acne_subtypes.ipynb). Keep this entry until the
     // bundled model itself is retrained on the 5 subtypes, or conditionTemplates[label] returns
     // null for a real Acne Vulgaris detection and the result screen hangs on "Analyzing your scan..."
-    DetectionResult("Acne Vulgaris", 94.3f, "Moderate", "Acne vulgaris is a common skin condition that occurs when hair follicles become clogged with oil and dead skin cells, causing whiteheads, blackheads, or pimples.", listOf("Whiteheads", "Blackheads", "Papules", "Pustules"), "Consult a dermatologist. Use gentle cleansers and avoid picking or squeezing affected areas.", Color(0xFFE53935), distinguishingFeature = "Clusters of whiteheads, blackheads, or inflamed pimples concentrated on the face, chest, or back."),
+    DetectionResult("Acne Vulgaris", 94.3f, "Moderate", "Acne vulgaris is a common skin condition that occurs when hair follicles become clogged with oil and dead skin cells, causing whiteheads, blackheads, or pimples.", listOf("Whiteheads and blackheads", "Red bumps or pus-filled pimples", "Oily skin", "Spots that feel sore or hot", "Painful lumps under the skin (severe acne)", "Dark marks or scars after spots heal"), "Consult a dermatologist. Use gentle cleansers and avoid picking or squeezing affected areas.", Color(0xFFE53935), distinguishingFeature = "Clusters of whiteheads, blackheads, or inflamed pimples concentrated on the face, chest, or back."),
     DetectionResult("Blackhead Acne", 94.3f, "Mild", "Blackheads are a mild, non-inflammatory form of acne that occurs when a hair follicle becomes clogged with oil and dead skin cells, and the clog's surface oxidizes and turns dark when exposed to air.", listOf("Small dark or black bumps", "Flat or slightly raised", "No redness or pain", "Common on nose, forehead, and chin"), "Use salicylic acid or benzoyl peroxide cleansers to help unclog pores. Avoid squeezing, which can cause scarring. Consult a dermatologist for persistent cases.", Color(0xFF424242), distinguishingFeature = "Small dark, flat bumps with no surrounding redness or inflammation — the clogged pore's surface has oxidized to a dark color."),
     DetectionResult("Whitehead Acne", 92.1f, "Mild", "Whiteheads are a mild, non-inflammatory form of acne where a clogged hair follicle stays closed beneath the skin's surface, forming a small white or flesh-colored bump.", listOf("Small white or skin-colored bumps", "Closed, not open like blackheads", "No redness or pain", "Often found in clusters"), "Use gentle exfoliants or retinoid creams to help clear clogged pores. Avoid picking, which can lead to inflammation or scarring. Consult a dermatologist if it persists.", Color(0xFFFFB300), distinguishingFeature = "Small closed bumps just under the skin's surface, white or skin-toned, without the dark oxidized center seen in blackheads."),
     DetectionResult("Papular Acne", 90.4f, "Moderate", "Papules are small, inflamed acne bumps that form when a clogged pore's walls break down, causing redness and mild swelling without visible pus.", listOf("Small red, raised bumps", "Tender to touch", "No visible pus", "Can be widespread or localized"), "Use benzoyl peroxide or topical retinoids to reduce inflammation. Avoid picking to prevent scarring. Consult a dermatologist if papules are widespread or persistent.", Color(0xFFE53935), distinguishingFeature = "Small, firm, red bumps without a visible white or yellow center — inflamed but not yet pus-filled."),
@@ -190,7 +212,9 @@ private suspend fun saveScan(
             scanDate = existingRecord?.scanDate ?: System.currentTimeMillis(),
             imagePath = savedImagePath,
             contributedForTraining = contribute && savedImagePath.isNotEmpty(),
-            trackGroupId = groupIdForInsert
+            trackGroupId = groupIdForInsert,
+            // Only alongside a saved photo: boxes with no image to draw on mean nothing.
+            boundingBoxes = if (savedImagePath.isNotEmpty()) encodeBoxes(result.boundingBoxes) else ""
         )
     ).toInt()
 
@@ -224,9 +248,11 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                 val record = DermaDatabase.getDatabase(context).scanRecordDao().getScanById(scanId)
                 if (record == null) {
                     analysisFailedResult()
+                } else if (record.condition == NO_CONDITION_FOUND) {
+                    noConditionResult(record.confidence)
                 } else {
                     val template = mockDetectionResults.associateBy { it.condition }[record.condition]
-                    template?.copy(confidence = record.confidence, severity = record.severity) ?: analysisFailedResult()
+                    template?.copy(confidence = record.confidence, severity = record.severity, boundingBoxes = decodeBoxes(record.boundingBoxes)) ?: analysisFailedResult()
                 }
             } else {
                 // Never fall back to mockDetectionResults.random() here: that turned any
@@ -294,7 +320,8 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     // retaking) still leaves the user somewhere useful instead of a dead end.
     // Saveable for the same reason as isSaved: otherwise it re-pops every time the user comes
     // back to this screen from another one.
-    var showLowConfidenceDialog by rememberSaveable { mutableStateOf(result.isLowConfidence) }
+    // Not for No Condition Found: that's a real (good) outcome, not a reason to retake.
+    var showLowConfidenceDialog by rememberSaveable { mutableStateOf(result.isLowConfidence && !result.isNoCondition) }
     // Set true only when Save to Progress actually also triggered a research upload (contribute
     // toggle on + image copy succeeded) -- not on every save, since most saves don't contribute.
     var showContributionDialog by remember { mutableStateOf(false) }
@@ -512,7 +539,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (!result.isLowConfidence) {
+                        if (!result.isLowConfidence || result.isNoCondition) {
                             Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(result.color))
                             Spacer(modifier = Modifier.width(10.dp))
                         }
@@ -544,7 +571,10 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                     val fresh = !isHistoryView
                     InfoChip(if (fresh) "Just now" else friendlyScanDate(date), Color.White, settings.textSecondary, icon = Icons.Outlined.Schedule)
                 }
-                if (result.isLowConfidence) {
+                if (result.isNoCondition) {
+                    InfoChip("Looks clear", Color(0xFFDCFCE7), DermaSuccessText)
+                    if (isSaved) InfoChip("Saved to Progress", Color(0xFFDCFCE7), DermaSuccessText)
+                } else if (result.isLowConfidence) {
                     InfoChip("No clear match", Color(0xFFF3F4F6), Color(0xFF4B5563))
                 } else {
                     val regions = result.boundingBoxes.size
@@ -558,7 +588,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
             Spacer(modifier = Modifier.height(16.dp))
 
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                ResultCard(icon = Icons.Outlined.Info, iconBg = DermaGreenLight, iconTint = DermaGreen, title = "About this condition") {
+                ResultCard(icon = Icons.Outlined.Info, iconBg = DermaGreenLight, iconTint = DermaGreen, title = if (result.isLowConfidence) "About this result" else "About this condition") {
                     Text(result.description, fontSize = settings.textMd.sp, color = Color(0xFF374151), lineHeight = (settings.textMd * 1.55f).sp)
                 }
 
@@ -591,16 +621,20 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                     icon = Icons.Default.AutoAwesome,
                     iconBg = Color(0xFFFEF3C7),
                     iconTint = Color(0xFFD97706),
-                    title = if (result.isLowConfidence) "What You Can Try" else "Common Symptoms"
+                    title = when {
+                        result.isNoCondition -> "Good to Know"
+                        result.isLowConfidence -> "What You Can Try"
+                        else -> "Common Symptoms"
+                    }
                 ) {
                     result.symptoms.forEach { symptom ->
                         Row(
                             modifier = Modifier.padding(vertical = 4.dp).semantics { contentDescription = "Symptom: $symptom" },
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.Top
                         ) {
-                            Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(result.color))
+                            Box(modifier = Modifier.padding(top = 7.dp).size(7.dp).clip(CircleShape).background(result.color))
                             Spacer(modifier = Modifier.width(10.dp))
-                            Text(symptom, fontSize = settings.textMd.sp, color = Color(0xFF374151))
+                            Text(symptom, fontSize = settings.textMd.sp, color = Color(0xFF374151), lineHeight = (settings.textMd * 1.45f).sp)
                         }
                     }
                 }
@@ -670,7 +704,12 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                 // entry that reopened as "Analysis Unavailable" (the history view only knows the
                 // six real conditions), counted as a "condition" in Profile, and -- with research
                 // contribution on -- offered to upload a non-skin or failed photo to the dataset.
-                if (!result.isLowConfidence) {
+                // No Condition Found can be saved only as the next scan of an existing timeline
+                // ("Scan Again" on a Progress card), where it shows that spot clearing up. A
+                // fresh clear scan has nothing to track, so it isn't offered there.
+                val canSave = !result.isLowConfidence ||
+                    (result.isNoCondition && (continueTrackGroupId != -1 || isHistoryView))
+                if (canSave) {
                     PillButton(
                         // Was "Save to History" -- renamed to match the one consistent name the rest
                         // of the app now uses for this same feature (bottom nav tab, Home's card,
@@ -697,7 +736,8 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                                         // effect of tapping this button.
                                         savedScanId = saveScan(context, result, imageUri, savedScanId, contribute = false, continueTrackGroupId = continueTrackGroupId.takeIf { it != -1 })
                                         isSaved = true
-                                        if (contributionFeatureEnabled && !isContributed) {
+                                        // Research uploads only take the 6 conditions' photos.
+                                        if (contributionFeatureEnabled && !isContributed && !result.isNoCondition) {
                                             showContributePrompt = true
                                         }
                                     } catch (e: Exception) {

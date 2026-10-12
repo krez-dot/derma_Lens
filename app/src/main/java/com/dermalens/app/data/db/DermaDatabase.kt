@@ -4,10 +4,20 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.dermalens.app.data.model.ScanRecord
 import com.dermalens.app.data.model.User
 
-@Database(entities = [User::class, ScanRecord::class], version = 7, exportSchema = true)
+// v8 adds scan_records.boundingBoxes. A real migration, not a wipe: existing scans keep everything
+// and just get an empty box list.
+private val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE scan_records ADD COLUMN boundingBoxes TEXT NOT NULL DEFAULT ''")
+    }
+}
+
+@Database(entities = [User::class, ScanRecord::class], version = 8, exportSchema = true)
 abstract class DermaDatabase : RoomDatabase() {
     abstract fun userDao(): UserDao
     abstract fun scanRecordDao(): ScanRecordDao
@@ -33,6 +43,7 @@ abstract class DermaDatabase : RoomDatabase() {
                     // build-time-visible failure that forces a real migration to be written,
                     // rather than a silent data-loss bug nobody notices until support tickets show up.
                     .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6)
+                    .addMigrations(MIGRATION_7_8)
                     .build()
                 INSTANCE = instance
                 instance

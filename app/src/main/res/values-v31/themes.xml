@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+ shows its own launch screen before the app draws. Same white as the
+         splash's backdrop and no icon, so it flows straight into the animated splash instead of
+         flashing the launcher icon first. -->
+    <style name="Theme.DermaLens" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowSplashScreenBackground">@color/splash_backdrop</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_blank</item>
+    </style>
+</resources>

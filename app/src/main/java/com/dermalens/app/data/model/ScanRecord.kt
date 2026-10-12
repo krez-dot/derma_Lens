@@ -1,5 +1,6 @@
 package com.dermalens.app.data.model
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -26,5 +27,11 @@ data class ScanRecord(
     // real id is known); "Scan Again" on a specific trend card copies that same value forward so
     // the new scan explicitly continues it, while "Start New Scan" leaves this null so a fresh
     // group gets created even if the result happens to classify as the same condition.
-    val trackGroupId: Int? = null
+    val trackGroupId: Int? = null,
+    // The detection boxes drawn on the result, so a saved scan reopens with them (FR16). Stored
+    // as "left,top,right,bottom;..." fractions of the photo (see encodeBoxes/decodeBoxes in
+    // ScanResultScreen.kt). Empty for scans saved before v8, restored from the cloud backup
+    // (which never carries photos, so there'd be nothing to draw on), or with no boxes.
+    @ColumnInfo(defaultValue = "")
+    val boundingBoxes: String = ""
 )

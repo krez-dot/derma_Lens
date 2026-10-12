@@ -45,11 +45,19 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-data class ScanEntry(val id: Int, val date: String, val confidence: Float, val notes: String, val imagePath: String = "", val rawDate: Long = 0L)
+/**
+ * Days since the user's first saved scan (today counts as day 1), or 0 with no scans. Shared by
+ * Progress and Profile so their "Days tracked" always agree -- it follows the scans, which the
+ * cloud backup restores, rather than when this phone's local profile happened to be created.
+ */
+fun countDaysTracked(scans: List<com.dermalens.app.data.model.ScanRecord>): Int =
+    if (scans.isEmpty()) 0 else ((System.currentTimeMillis() - scans.minOf { it.scanDate }) / (1000L * 60L * 60L * 24L)).toInt() + 1
+
+data class ScanEntry(val id: Int, val date: String, val confidence: Float, val notes: String, val imagePath: String = "", val rawDate: Long = 0L, val isClear: Boolean = false)
 // trackGroupId identifies which specific occurrence/spot this card represents -- passed back to
 // Scan when "Scan Again" is tapped so the resulting new scan explicitly continues *this* card's
 // trend instead of just matching by condition name. See ScanRecord.trackGroupId.
-data class ConditionTrack(val condition: String, val color: Color, val emoji: String, val scans: List<ScanEntry>, val trackGroupId: Int)
+data class ConditionTrack(val condition: String, val color: Color, val emoji: String, val scans: List<ScanEntry>, val trackGroupId: Int, val latestClear: Boolean = false)
 
 val mockProgressData = listOf(
     ConditionTrack("Papular Acne", Color(0xFFE53935), "🔴", listOf(
@@ -89,12 +97,9 @@ fun ProgressTrackerScreen(navController: NavController) {
         if (user != null) {
             val scans = db.scanRecordDao().getScansByUserOnce(user.userId)
             totalScans = scans.size
-            conditionCount = scans.map { it.condition }.distinct().size
+            conditionCount = scans.map { it.condition }.filter { it != NO_CONDITION_FOUND }.distinct().size
             // Reset to 0 when empty -- otherwise deleting the last scan left the old value up.
-            daysTracked = if (scans.isEmpty()) 0 else {
-                val earliest = scans.minOf { it.scanDate }
-                ((System.currentTimeMillis() - earliest) / (1000L * 60L * 60L * 24L)).toInt() + 1
-            }
+            daysTracked = countDaysTracked(scans)
             // Grouped by trackGroupId, not condition -- two unrelated occurrences that happen to
             // classify the same (a wart on one finger, an unrelated new wart on a toe) get their
             // own separate cards instead of being conflated into one misleading trend. Falls back
@@ -105,7 +110,9 @@ fun ProgressTrackerScreen(navController: NavController) {
                 val sortedScans = scanList.sortedBy { it.scanDate }
                 // The card shows the *latest* classification for this group, not the first --
                 // reflects current status, matching the timeline's own "Latest scan" emphasis.
-                val condition = sortedScans.last().condition
+                // A "No Condition Found" re-scan keeps the card named after the condition it was
+                // tracking, and marks the spot as clear instead.
+                val condition = sortedScans.lastOrNull { it.condition != NO_CONDITION_FOUND }?.condition ?: sortedScans.last().condition
                 val mockTrack = mockProgressData.find { it.condition == condition }
                 ConditionTrack(
                     condition = condition,
@@ -125,10 +132,12 @@ fun ProgressTrackerScreen(navController: NavController) {
                             confidence = scan.confidence,
                             notes = scan.notes,
                             imagePath = scan.imagePath,
-                            rawDate = scan.scanDate
+                            rawDate = scan.scanDate,
+                            isClear = scan.condition == NO_CONDITION_FOUND
                         )
                     },
-                    trackGroupId = groupId
+                    trackGroupId = groupId,
+                    latestClear = sortedScans.last().condition == NO_CONDITION_FOUND
                 ) to (sortedScans.lastOrNull()?.scanDate ?: 0L)
             }.sortedByDescending { (_, latestRawDate) -> latestRawDate }.map { (track, _) -> track }
         }
@@ -334,6 +343,9 @@ fun ConditionTrackCard(track: ConditionTrack, onScanAgain: () -> Unit, onDeleteS
                         color = settings.textSecondary,
                         maxLines = 1
                     )
+                    if (track.latestClear) {
+                        Text("Latest scan looks clear", fontSize = settings.textSm.sp, fontWeight = FontWeight.SemiBold, color = DermaSuccessText)
+                    }
                 }
                 val chevronRotation by animateFloatAsState(if (isExpanded) 0f else 180f, label = "chevronRotation")
                 Box(
@@ -518,7 +530,11 @@ fun TimelineNode(scan: ScanEntry, isLatest: Boolean, isLastRow: Boolean, color: 
         }
         Spacer(modifier = Modifier.width(8.dp))
         Column(horizontalAlignment = Alignment.End) {
-            Text("${scan.confidence.roundToInt()}%", fontSize = settings.textMd.sp, fontWeight = FontWeight.Bold, color = DermaGreen)
+            if (scan.isClear) {
+                Text("Clear", fontSize = settings.textMd.sp, fontWeight = FontWeight.Bold, color = DermaSuccessText)
+            } else {
+                Text("${scan.confidence.roundToInt()}%", fontSize = settings.textMd.sp, fontWeight = FontWeight.Bold, color = DermaGreen)
+            }
             Row {
                 IconButton(onClick = { editedNote = scan.notes; showEditNoteDialog = true }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Outlined.Edit, contentDescription = "Edit note", tint = DermaSubtle, modifier = Modifier.size(17.dp))

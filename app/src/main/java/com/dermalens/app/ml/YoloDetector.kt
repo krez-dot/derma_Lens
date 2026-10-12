@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.compose.ui.graphics.Color
 import com.dermalens.app.ui.screens.DetectionResult
 import com.dermalens.app.ui.screens.DifferentialCandidate
+import com.dermalens.app.ui.screens.NO_CONDITION_FOUND
 import com.dermalens.app.ui.screens.NormalizedBox
 import com.dermalens.app.ui.screens.mockDetectionResults
 import org.tensorflow.lite.Interpreter
@@ -59,6 +60,52 @@ private const val MIN_CONFIDENCE_PERCENT = CONFIDENCE_THRESHOLD * 100f
 // still filters out the long tail of near-zero scores every untrained class gets.
 private const val MIN_DIFFERENTIAL_PERCENT = 15f
 private const val MAX_DIFFERENTIALS = 2
+
+// "No Condition Found" needs BOTH of these: the model saw almost nothing (well under the 0.30
+// floor, not just under it) and the photo is mostly skin-coloured. Measured on photos neither
+// the model nor these numbers were fitted to (2026-10-08): 82 of 143 clear-skin close-ups get it,
+// while only 1 of 392 condition test photos and 4 of 271 outdoor scenes do. Everything else under
+// the floor still gets the neutral "No Clear Condition Detected". Scores between 0.10 and 0.30
+// stay neutral on purpose: half of the condition photos the model misses land there.
+private const val NO_CONDITION_MAX_SCORE = 0.10f
+
+// Share of the photo inside the classic YCrCb skin-colour box (Chai & Ngan, 1999). A stricter
+// combined RGB rule (Kovac et al.) was also tried and rejected: it cut tanned/brown skin in shade
+// sharply (one close-up fell from 0.97 to 0.53), and most DermaLens users have brown skin.
+private const val NO_CONDITION_MIN_SKIN_FRACTION = 0.70f
+
+private fun skinFraction(bitmap: Bitmap): Float {
+    val sampleSize = 64
+    val sampled = Bitmap.createScaledBitmap(bitmap, sampleSize, sampleSize, true)
+    val pixels = IntArray(sampleSize * sampleSize)
+    sampled.getPixels(pixels, 0, sampleSize, 0, 0, sampleSize, sampleSize)
+    val skin = pixels.count { p ->
+        val r = (p shr 16) and 0xFF
+        val g = (p shr 8) and 0xFF
+        val b = p and 0xFF
+        val cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b
+        val cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b
+        cr in 133.0..173.0 && cb in 77.0..127.0
+    }
+    return skin.toFloat() / pixels.size
+}
+
+fun noConditionResult(confidencePercent: Float) = DetectionResult(
+    condition = NO_CONDITION_FOUND,
+    confidence = confidencePercent,
+    severity = "None",
+    description = "DermaLens didn't find signs of acne, eczema, melasma, tinea, warts or scabies in this photo. " +
+        "Your skin looks clear of the 6 conditions DermaLens checks for.",
+    symptoms = listOf(
+        "DermaLens only checks for 6 conditions, so other skin problems won't show up here",
+        "If you can see a spot, rash or patch, take a closer photo with it filling the frame",
+        "Scan again if something on your skin changes"
+    ),
+    recommendation = "If anything about your skin worries you, such as itching, pain, or a spot that grows or changes, consult a dermatologist.",
+    color = Color(0xFF16A34A),
+    isLowConfidence = true,
+    isNoCondition = true
+)
 
 private fun lowConfidenceResult(confidencePercent: Float) = DetectionResult(
     condition = "No Clear Condition Detected",
@@ -186,7 +233,13 @@ fun runYoloInference(context: Context, imageUri: String): DetectionResult? {
             Log.d("DermaLens", "YOLO result classIndex=$classIndex confidence=$confidence boxes=$boxes")
             Log.d("DermaLensPerf", "totalPipeline=${System.currentTimeMillis() - tTotalStart}ms (includes NMS/postprocess)")
             if (confidencePercent < MIN_CONFIDENCE_PERCENT) {
-                return lowConfidenceResult(confidencePercent)
+                val skin = skinFraction(bitmap)
+                Log.d("DermaLens", "Below floor: top=$confidence skinFraction=$skin")
+                return if (confidence < NO_CONDITION_MAX_SCORE && skin >= NO_CONDITION_MIN_SKIN_FRACTION) {
+                    noConditionResult(confidencePercent)
+                } else {
+                    lowConfidenceResult(confidencePercent)
+                }
             }
             val label = CLASS_LABELS.getOrNull(classIndex) ?: return null
             val template = conditionTemplates[label] ?: return null

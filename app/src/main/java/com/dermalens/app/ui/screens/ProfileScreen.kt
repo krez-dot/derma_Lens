@@ -1,7 +1,11 @@
 package com.dermalens.app.ui.screens
 
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -76,6 +80,9 @@ fun ProfileScreen(navController: NavController) {
     var highContrast by remember { mutableStateOf(prefs.getBoolean(DermaPrefs.KEY_HIGH_CONTRAST, false)) }
     var contributeData by remember { mutableStateOf(prefs.getBoolean(DermaPrefs.KEY_CONTRIBUTE_DATA, false)) }
     var notificationsEnabled by remember { mutableStateOf(prefs.getBoolean(DermaPrefs.KEY_NOTIFICATIONS_ENABLED, true)) }
+    var reminderHour by remember { mutableStateOf(com.dermalens.app.worker.NotificationScheduler.reminderHour(context)) }
+    var reminderMinute by remember { mutableStateOf(com.dermalens.app.worker.NotificationScheduler.reminderMinute(context)) }
+    var showTimePicker by remember { mutableStateOf(false) }
     var backupEnabled by remember { mutableStateOf(ScanHistorySync.isEnabled(context)) }
     var showBackupOnDialog by remember { mutableStateOf(false) }
     var showBackupOffDialog by remember { mutableStateOf(false) }
@@ -86,10 +93,14 @@ fun ProfileScreen(navController: NavController) {
         if (user != null) {
             userName = user.fullName
             userEmail = user.email
-            memberSince = java.text.SimpleDateFormat("MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(user.createdAt))
-            totalScans = db.scanRecordDao().getScanCount(user.userId)
-            conditions = db.scanRecordDao().getConditionsByUser(user.userId).size
-            daysActive = ((System.currentTimeMillis() - user.createdAt) / (1000L * 60L * 60L * 24L)).toInt() + 1
+            // The Firebase account's own creation date, the same on every phone; the local profile
+            // row's date resets on a new phone or reinstall.
+            val joined = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.metadata?.creationTimestamp ?: user.createdAt
+            memberSince = java.text.SimpleDateFormat("MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(joined))
+            val scans = db.scanRecordDao().getScansByUserOnce(user.userId)
+            totalScans = scans.size
+            conditions = db.scanRecordDao().getConditionsByUser(user.userId).count { it != NO_CONDITION_FOUND }
+            daysActive = countDaysTracked(scans)
         }
     }
 
@@ -155,7 +166,7 @@ fun ProfileScreen(navController: NavController) {
             // Stats
             EntranceAnimation(delayMillis = 40) {
                 StatRow(
-                    listOf("$totalScans" to "Total scans", "$conditions" to "Conditions", "$daysActive" to "Days active"),
+                    listOf("$totalScans" to "Total scans", "$conditions" to "Conditions", "$daysActive" to "Days tracked"),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
                 )
             }
@@ -174,7 +185,7 @@ fun ProfileScreen(navController: NavController) {
             ProfileSectionHeader("Account")
             Spacer(modifier = Modifier.height(8.dp))
             ProfileMenuCard {
-                ProfileMenuItemSwitch(icon = Icons.Default.Notifications, iconBg = Color(0xFFEFF6FF), iconTint = Color(0xFF2563EB), title = "Scan Reminders", subtitle = if (notificationsEnabled) "Reminders are ON" else "Reminders are OFF", checked = notificationsEnabled, onCheckedChange = {
+                ProfileMenuItemSwitch(icon = Icons.Default.Notifications, iconBg = Color(0xFFEFF6FF), iconTint = Color(0xFF2563EB), title = "Scan Reminders", subtitle = if (notificationsEnabled) "Around ${formatReminderTime(context, reminderHour, reminderMinute)} every day" else "Reminders are OFF", checked = notificationsEnabled, onCheckedChange = {
                     notificationsEnabled = it
                     prefs.edit().putBoolean(DermaPrefs.KEY_NOTIFICATIONS_ENABLED, it).apply()
                     if (it) {
@@ -183,6 +194,15 @@ fun ProfileScreen(navController: NavController) {
                         com.dermalens.app.worker.NotificationScheduler.cancelReminder(context)
                     }
                 })
+                // Only offered while reminders are on -- picking a time for a disabled reminder
+                // would just be a dead setting. "Around" is deliberate: WorkManager batches
+                // periodic work and Doze defers it, so the exact minute isn't guaranteed. Exact
+                // delivery would mean AlarmManager + the SCHEDULE_EXACT_ALARM permission, which
+                // isn't worth a system prompt for a skin-check nudge.
+                if (notificationsEnabled) {
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
+                    ProfileMenuItem(icon = Icons.Default.Schedule, iconBg = Color(0xFFEFF6FF), iconTint = Color(0xFF2563EB), title = "Reminder Time", subtitle = formatReminderTime(context, reminderHour, reminderMinute), onClick = { showTimePicker = true })
+                }
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
                 // Fires a real notification ~5s later via a one-time WorkRequest, not a fake
                 // in-app toast pretending to be one -- see NotificationScheduler.scheduleTestReminder
@@ -344,6 +364,106 @@ fun ProfileScreen(navController: NavController) {
             Text("DermaLens is a capstone project by Tarlac State University.\nFor educational and research purposes only.", fontSize = settings.textSm.sp, color = settings.textSecondary, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp), lineHeight = 16.sp)
             Spacer(modifier = Modifier.height(24.dp))
         }
+    }
+
+    // Reminder time picker. Material3's own TimePicker inside the app's DermaAlertDialog shell,
+    // rather than android.app.TimePickerDialog -- the platform dialog renders in the old Holo
+    // teal and ignores the app's purple entirely, so it looked like a different app.
+    if (showTimePicker) {
+        // Three sensible times cover almost everyone, so the default view is a short list of
+        // taps rather than a clock face. The full picker is still there behind "Custom", for
+        // the minority who want 6:40am.
+        val presets = listOf(
+            Triple("Morning", 9, 0),
+            Triple("Midday", 12, 0),
+            Triple("Evening", 19, 0)
+        )
+        var pendingHour by remember { mutableStateOf(reminderHour) }
+        var pendingMinute by remember { mutableStateOf(reminderMinute) }
+        var customMode by remember { mutableStateOf(false) }
+        var customHour by remember { mutableStateOf(reminderHour) }
+        var customMinute by remember { mutableStateOf(reminderMinute) }
+        val onPreset = presets.any { it.second == pendingHour && it.third == pendingMinute }
+
+        fun apply(hour: Int, minute: Int) {
+            showTimePicker = false
+            reminderHour = hour
+            reminderMinute = minute
+            com.dermalens.app.worker.NotificationScheduler.setReminderTime(context, hour, minute)
+            android.widget.Toast.makeText(
+                context,
+                "Reminder set for around ${formatReminderTime(context, hour, minute)}",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        DermaAlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            icon = { Icon(Icons.Default.Schedule, contentDescription = null, tint = DermaGreen) },
+            title = { Text("Reminder Time", fontWeight = FontWeight.Bold, fontSize = settings.textXl.sp) },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "DermaLens will nudge you around this time each day.",
+                        color = settings.textSecondary,
+                        fontSize = settings.textSm.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    if (customMode) {
+                        TimeWheels(
+                            hour24 = customHour,
+                            minute = customMinute,
+                            is24Hour = android.text.format.DateFormat.is24HourFormat(context),
+                            onChange = { h, m -> customHour = h; customMinute = m },
+                            textPrimary = settings.textPrimary,
+                            fontSize = settings.textXl.sp
+                        )
+                    } else {
+                        presets.forEach { (label, hour, minute) ->
+                            ReminderPresetRow(
+                                label = label,
+                                time = formatReminderTime(context, hour, minute),
+                                selected = pendingHour == hour && pendingMinute == minute,
+                                highContrast = settings.highContrast,
+                                textPrimary = settings.textPrimary,
+                                textSecondary = settings.textSecondary,
+                                labelSize = settings.textMd.sp,
+                                timeSize = settings.textSm.sp,
+                                onClick = { pendingHour = hour; pendingMinute = minute }
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                        ReminderPresetRow(
+                            label = "Custom",
+                            time = if (onPreset) "Pick a time" else formatReminderTime(context, pendingHour, pendingMinute),
+                            selected = !onPreset,
+                            highContrast = settings.highContrast,
+                            textPrimary = settings.textPrimary,
+                            textSecondary = settings.textSecondary,
+                            labelSize = settings.textMd.sp,
+                            timeSize = settings.textSm.sp,
+                            onClick = { customMode = true }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (customMode) apply(customHour, customMinute)
+                        else apply(pendingHour, pendingMinute)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = DermaGreen),
+                    shape = RoundedCornerShape(50)
+                ) { Text(if (customMode) "Set Time" else "Save", fontSize = settings.textMd.sp) }
+            },
+            dismissButton = {
+                TextButton(onClick = { if (customMode) customMode = false else showTimePicker = false }) {
+                    Text(if (customMode) "Back" else "Cancel", color = settings.textSecondary, fontSize = settings.textMd.sp)
+                }
+            }
+        )
     }
 
     // Logout Dialog
@@ -651,13 +771,12 @@ fun ProfileScreen(navController: NavController) {
                 ) {
                     Text("Effective Date: January 1, 2026", fontSize = settings.textSm.sp, color = DermaSubtle)
                     PrivacySection("1. Information We Collect", "DermaLens collects the following data to provide its services:\n\n• Profile information you provide (full name, email address)\n• Skin scan results including detected condition, confidence score, and severity level\n• Scan history and timestamps stored locally on your device (and, only if you turn on Back Up Scan History, in the cloud without photos)\n• Device location (GPS) used only to find nearby dermatology clinics")
-                    PrivacySection("2. How We Use Your Data", "All data collected by DermaLens is used solely to:\n\n• Display your scan history and progress over time\n• Personalize your in-app experience\n• Help locate nearby dermatology clinics based on your location\n• Send optional daily skin care reminder notifications")
+                    PrivacySection("2. How We Use Your Data", "All data collected by DermaLens is used solely to:\n\n• Display your scan history and progress over time\n• Personalize your in-app experience\n• Help locate nearby dermatology clinics based on your location\n• Send optional daily scan reminder notifications")
                     PrivacySection("3. Data Storage", "All personal data and scan records are stored locally on your device using a secure Room database, including a saved copy of each scan's photo so you can review your progress over time. Your account's email address and verification status are managed by Google Firebase Authentication.\n\nIf you turn on Back Up Scan History (Profile > Account), your scan records (condition, confidence, severity, date, and notes) are also stored in Google Firebase, accessible only to your account, so they can be restored on another phone. Scan photos are never included in this backup. Turning backup off, or deleting your account, deletes the cloud copy.\n\nScan images leave your device only if you separately opt in to Contribute to Research, and then anonymously.")
                     PrivacySection("4. Camera & Gallery Access", "Camera and gallery access is used exclusively to capture or select skin images for AI analysis. Images are processed on-device and saved locally with your scan history. They are never shared with third parties, and are only uploaded if you opt in to Contribute to Research.")
                     PrivacySection("5. Location Access", "Location is accessed only when you use the Clinic Locator feature to find nearby dermatology clinics. Location data is not stored or logged.")
                     PrivacySection("6. AI Disclaimer", "DermaLens uses an on-device AI model (YOLOv11 TFLite) for skin condition detection. Results are for reference only and do not constitute medical advice. Always consult a dermatologist for diagnosis and treatment.")
-                    PrivacySection("7. Children's Privacy", "DermaLens is not intended for users under the age of 13. We do not knowingly collect data from children.")
-                    PrivacySection("8. Contact", "DermaLens is a capstone project developed at Tarlac State University, 2026. For questions or concerns, please contact the development team through your institution.")
+                    PrivacySection("7. Contact", "DermaLens is a capstone project developed at Tarlac State University, 2026. For questions or concerns, please contact the development team through your institution.")
                 }
             },
             confirmButton = {
@@ -907,6 +1026,187 @@ fun ProfileStatItem(value: String, label: String, icon: String) {
 @Composable
 fun ProfileMenuCard(content: @Composable ColumnScope.() -> Unit) {
     SoftCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), content = content)
+}
+
+/** A single snapping wheel. The centre slot is the selection, so the list carries half a wheel of
+ *  padding top and bottom to let the first and last values reach it. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun WheelColumn(
+    items: List<String>,
+    index: Int,
+    onIndexChange: (Int) -> Unit,
+    selectedColor: Color,
+    unselectedColor: Color,
+    fontSize: androidx.compose.ui.unit.TextUnit,
+    modifier: Modifier = Modifier,
+    itemHeight: androidx.compose.ui.unit.Dp = 44.dp,
+    visibleCount: Int = 5
+) {
+    val state = rememberLazyListState(initialFirstVisibleItemIndex = index)
+    val itemPx = with(androidx.compose.ui.platform.LocalDensity.current) { itemHeight.toPx() }
+    LaunchedEffect(state) {
+        snapshotFlow { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
+            .collect { (first, offset) ->
+                val centred = (first + if (offset > itemPx / 2f) 1 else 0)
+                    .coerceIn(0, items.lastIndex)
+                if (centred != index) onIndexChange(centred)
+            }
+    }
+    LazyColumn(
+        state = state,
+        flingBehavior = rememberSnapFlingBehavior(state),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        contentPadding = PaddingValues(vertical = itemHeight * (visibleCount / 2)),
+        modifier = modifier.height(itemHeight * visibleCount)
+    ) {
+        itemsIndexed(items) { i, label ->
+            val selected = i == index
+            Box(
+                modifier = Modifier.height(itemHeight).fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    label,
+                    fontSize = fontSize,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                    color = if (selected) selectedColor else unselectedColor.copy(alpha = 0.38f)
+                )
+            }
+        }
+    }
+}
+
+/** Hour / minute / AM-PM wheels with a purple band marking the centre slot. Replaces Material3's
+ *  clock dial, which ate half the dialog. Works in 24h mode too -- the period wheel just drops. */
+@Composable
+private fun TimeWheels(
+    hour24: Int,
+    minute: Int,
+    is24Hour: Boolean,
+    onChange: (hour24: Int, minute: Int) -> Unit,
+    textPrimary: Color,
+    fontSize: androidx.compose.ui.unit.TextUnit
+) {
+    val hourLabels = if (is24Hour) (0..23).map { "%02d".format(it) } else (1..12).map { "%02d".format(it) }
+    val minuteLabels = (0..59).map { "%02d".format(it) }
+    val periodLabels = listOf("AM", "PM")
+
+    var hIndex by remember {
+        mutableStateOf(
+            if (is24Hour) hour24
+            else ((hour24 % 12).let { if (it == 0) 12 else it }) - 1
+        )
+    }
+    var mIndex by remember { mutableStateOf(minute) }
+    var pIndex by remember { mutableStateOf(if (hour24 < 12) 0 else 1) }
+
+    fun emit() {
+        val h = if (is24Hour) hIndex else {
+            val shown = hIndex + 1                       // 1..12
+            if (pIndex == 0) (if (shown == 12) 0 else shown)
+            else (if (shown == 12) 12 else shown + 12)
+        }
+        onChange(h, mIndex)
+    }
+
+    val itemHeight = 44.dp
+    Box(contentAlignment = Alignment.Center) {
+        // The highlight band sits behind the wheels so the centred value reads as selected.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(itemHeight)
+                .clip(RoundedCornerShape(14.dp))
+                .background(DermaGreenLight)
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            WheelColumn(
+                items = hourLabels, index = hIndex,
+                onIndexChange = { hIndex = it; emit() },
+                selectedColor = DermaGreenDark, unselectedColor = textPrimary,
+                fontSize = fontSize, itemHeight = itemHeight, modifier = Modifier.width(72.dp)
+            )
+            Text(":", fontSize = fontSize, fontWeight = FontWeight.Bold, color = DermaGreenDark)
+            WheelColumn(
+                items = minuteLabels, index = mIndex,
+                onIndexChange = { mIndex = it; emit() },
+                selectedColor = DermaGreenDark, unselectedColor = textPrimary,
+                fontSize = fontSize, itemHeight = itemHeight, modifier = Modifier.width(72.dp)
+            )
+            if (!is24Hour) {
+                Spacer(modifier = Modifier.width(8.dp))
+                WheelColumn(
+                    items = periodLabels, index = pIndex,
+                    onIndexChange = { pIndex = it; emit() },
+                    selectedColor = DermaGreenDark, unselectedColor = textPrimary,
+                    fontSize = fontSize, itemHeight = itemHeight, modifier = Modifier.width(64.dp)
+                )
+            }
+        }
+    }
+}
+
+/** One selectable row in the reminder-time dialog: label on the left, the time on the right, and
+ *  a purple tint plus a check once chosen. */
+@Composable
+private fun ReminderPresetRow(
+    label: String,
+    time: String,
+    selected: Boolean,
+    highContrast: Boolean,
+    textPrimary: Color,
+    textSecondary: Color,
+    labelSize: androidx.compose.ui.unit.TextUnit,
+    timeSize: androidx.compose.ui.unit.TextUnit,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(16.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(if (selected) DermaGreenLight else Color(0xFFF9FAFB))
+            .then(
+                if (selected || highContrast)
+                    Modifier.border(if (selected) 2.dp else 1.dp, if (selected) DermaGreen else HcBorder, shape)
+                else Modifier
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            label,
+            color = if (selected) DermaGreenDark else textPrimary,
+            fontSize = labelSize,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            time,
+            color = if (selected) DermaGreenDark else textSecondary,
+            fontSize = timeSize,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+        )
+        if (selected) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = DermaGreen, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+/** Renders the reminder time the way the user's own phone writes times -- 12h or 24h, following
+ *  Settings > System > Date & time rather than hardcoding one format. */
+private fun formatReminderTime(context: android.content.Context, hour: Int, minute: Int): String {
+    val time = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, hour)
+        set(java.util.Calendar.MINUTE, minute)
+    }.time
+    return android.text.format.DateFormat.getTimeFormat(context).format(time)
 }
 
 @Composable

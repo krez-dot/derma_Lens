@@ -1,6 +1,7 @@
 package com.dermalens.app.ui.screens
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -32,6 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.LocalHospital
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.statusBars
@@ -52,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import com.dermalens.app.BuildConfig
+import com.dermalens.app.R
 import com.dermalens.app.ui.LocalAppSettings
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -63,13 +66,20 @@ import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.JointType
 import com.google.android.gms.maps.model.LatLngBounds
+import com.google.android.gms.maps.model.MapStyleOptions
+import com.google.android.gms.maps.model.RoundCap
+import com.google.maps.android.compose.Circle
 import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -109,18 +119,89 @@ private fun todaysHoursLine(hours: String): String {
     return line.substringAfter(": ", line)
 }
 
+/** "You are here": a purple dot in a thick white ring with a soft shadow (the pulse is drawn separately on the map). */
 private fun createUserDotBitmap(context: Context): Bitmap {
     val dp = context.resources.displayMetrics.density
-    val size = (22 * dp).toInt()
+    val ring = 12f * dp
+    val pad = 4f * dp // room for the shadow
+    val size = (2 * (ring + pad)).toInt()
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     val cx = size / 2f
     paint.color = 0xFFFFFFFF.toInt()
-    canvas.drawCircle(cx, cx, cx, paint)
+    paint.setShadowLayer(3f * dp, 0f, 1f * dp, 0x55000000)
+    canvas.drawCircle(cx, cx, ring, paint)
+    paint.clearShadowLayer()
     paint.color = 0xFF7C3AED.toInt()
-    canvas.drawCircle(cx, cx, cx * 0.62f, paint)
+    canvas.drawCircle(cx, cx, ring * 0.66f, paint)
     return bitmap
+}
+
+/**
+ * The focused clinic's pin with a white name bubble above it -- name in bold, distance/time under
+ * it -- the way ride-hailing maps label a destination. Anchored at the pin's tip, like the plain pin.
+ */
+private fun createLabeledPinBitmap(context: Context, color: Int, title: String, subtitle: String): PinBitmap {
+    val s = context.resources.displayMetrics.density
+    val pin = createMarkerBitmap(context, color, selected = true)
+    val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 13f * s
+        this.color = 0xFF111827.toInt()
+        typeface = androidx.core.content.res.ResourcesCompat.getFont(context, com.dermalens.app.R.font.poppins_semibold)
+    }
+    val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 11.5f * s
+        this.color = 0xFF6B7280.toInt()
+        typeface = androidx.core.content.res.ResourcesCompat.getFont(context, com.dermalens.app.R.font.poppins_medium)
+    }
+    val maxText = 190f * s
+    fun fit(text: String, p: Paint): String {
+        if (p.measureText(text) <= maxText) return text
+        var t = text
+        while (t.length > 1 && p.measureText("$t…") > maxText) t = t.dropLast(1)
+        return t.trimEnd() + "…"
+    }
+    val t1 = fit(title, titlePaint)
+    val t2 = fit(subtitle, subPaint)
+    val padX = 12f * s
+    val padY = 8f * s
+    val gap = 2f * s
+    val pointer = 6f * s
+    val shadow = 5f * s
+    val textW = maxOf(titlePaint.measureText(t1), subPaint.measureText(t2))
+    val bubbleW = textW + 2 * padX
+    val line1 = titlePaint.fontMetrics.let { it.descent - it.ascent }
+    val line2 = subPaint.fontMetrics.let { it.descent - it.ascent }
+    val bubbleH = padY * 2 + line1 + gap + line2
+    val w = maxOf(bubbleW + 2 * shadow, pin.bitmap.width.toFloat()).toInt()
+    val bubbleTop = shadow
+    val pinTop = bubbleTop + bubbleH + pointer + 2f * s
+    val h = (pinTop + pin.bitmap.height).toInt()
+
+    val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    val cx = w / 2f
+    val left = cx - bubbleW / 2f
+    val box = android.graphics.RectF(left, bubbleTop, left + bubbleW, bubbleTop + bubbleH)
+    val bubble = Path().apply {
+        addRoundRect(box, 12f * s, 12f * s, Path.Direction.CW)
+        op(Path().apply {
+            moveTo(cx - pointer, box.bottom - 1f * s)
+            lineTo(cx, box.bottom + pointer)
+            lineTo(cx + pointer, box.bottom - 1f * s)
+            close()
+        }, Path.Op.UNION)
+    }
+    paint.color = 0xFFFFFFFF.toInt()
+    paint.setShadowLayer(4f * s, 0f, 1.5f * s, 0x33000000)
+    canvas.drawPath(bubble, paint)
+    paint.clearShadowLayer()
+    canvas.drawText(t1, left + padX, bubbleTop + padY - titlePaint.fontMetrics.ascent, titlePaint)
+    canvas.drawText(t2, left + padX, bubbleTop + padY + line1 + gap - subPaint.fontMetrics.ascent, subPaint)
+    canvas.drawBitmap(pin.bitmap, cx - pin.bitmap.width / 2f, pinTop, null)
+    return PinBitmap(bitmap, (pinTop + pin.anchorY * pin.bitmap.height) / h)
 }
 
 private fun haversineKm(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
@@ -417,7 +498,7 @@ private fun clinicDistanceLabel(clinic: Clinic, route: RouteInfo?): String {
     return "$km · $minutes min"
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun ClinicLocatorScreen(navController: NavController) {
     val context = LocalContext.current
@@ -428,6 +509,18 @@ fun ClinicLocatorScreen(navController: NavController) {
     // selectedClinic, which only drives the details dialog -- tapping a pin shouldn't pop a dialog
     // over the very route it just drew.
     var focusedClinic by remember { mutableStateOf<Clinic?>(null) }
+    // Hands the trip to Google Maps (the app if installed, otherwise the browser). By Place ID when
+    // there is one, so the right branch of a chain opens rather than the first match for its name.
+    fun openDirections(clinic: Clinic) {
+        val destination = if (clinic.placeId.isNotEmpty()) java.net.URLEncoder.encode(clinic.name, "UTF-8") else "${clinic.lat},${clinic.lng}"
+        val url = "https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=$destination" +
+            (if (clinic.placeId.isNotEmpty()) "&destination_place_id=${clinic.placeId}" else "")
+        try {
+            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+        } catch (e: android.content.ActivityNotFoundException) {
+            android.widget.Toast.makeText(context, "No app found to open directions.", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
     // Crowd-sourced open/closed tally for whichever clinic's popup is currently open -- see
     // ClinicVotes.kt. Reset per-clinic by the LaunchedEffect below, not shared across clinics.
     var voteTally by remember { mutableStateOf<ClinicVoteTally?>(null) }
@@ -695,6 +788,60 @@ fun ClinicLocatorScreen(navController: NavController) {
             if (targetShowMap) {
                 val sheetListState = rememberLazyListState()
                 val mapScope = rememberCoroutineScope()
+                val scaffoldState = rememberBottomSheetScaffoldState()
+                // Grab-style row of clinic cards, shown instead of the list sheet while a clinic is
+                // focused. Swiping it moves the focus; tapping a pin scrolls it.
+                val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { clinics.size })
+                val carouselVisible = focusedClinic != null && clinics.isNotEmpty()
+                val sheetPeek by androidx.compose.animation.core.animateDpAsState(
+                    if (carouselVisible) 0.dp else CLINIC_SHEET_PEEK, tween(280), label = "sheetPeek"
+                )
+                val mapBottomPadding by androidx.compose.animation.core.animateDpAsState(
+                    if (carouselVisible) CLINIC_CAROUSEL_SPACE else CLINIC_SHEET_PEEK, tween(280), label = "mapBottomPadding"
+                )
+                var previousFocus by remember { mutableStateOf<Clinic?>(null) }
+                LaunchedEffect(pagerState, clinics) {
+                    androidx.compose.runtime.snapshotFlow { pagerState.settledPage }.collect { page ->
+                        val clinic = clinics.getOrNull(page)
+                        if (focusedClinic != null && clinic != null && clinic != focusedClinic) focusedClinic = clinic
+                    }
+                }
+                // Back closes the cards first, before leaving the screen.
+                androidx.activity.compose.BackHandler(enabled = focusedClinic != null) { focusedClinic = null }
+                // Our own map look, ride-hailing style: a quiet near-white base with shops, food,
+                // transit and Google's own hospital icons hidden, so the clinic pins are what stands
+                // out. Free -- a client-side style, no extra Maps API. Null (Google's default look)
+                // if it can't load.
+                val mapStyle = remember {
+                    try { MapStyleOptions.loadRawResourceStyle(context, R.raw.map_style_clean) } catch (e: Exception) { null }
+                }
+                // The focused clinic's pin carries a name + distance bubble; rebuilt when the focus
+                // or its route (which turns the straight-line distance into a driving one) changes.
+                val focusedRoute = focusedClinic?.let { routes[it.name] }
+                val focusedPinIcon = remember(focusedClinic, focusedRoute) {
+                    focusedClinic?.let { c ->
+                        try {
+                            createLabeledPinBitmap(context, pinColor(c.openNow), c.name, clinicDistanceLabel(c, focusedRoute))
+                                .let { BitmapDescriptorFactory.fromBitmap(it.bitmap) to it.anchorY }
+                        } catch (e: Exception) { null }
+                    }
+                }
+                // A soft ring that keeps growing out of the "You are here" dot. Skipped when the
+                // phone's animations are turned off (Settings > Accessibility > Remove animations).
+                val pulseEnabled = remember {
+                    android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
+                }
+                val pulse = if (pulseEnabled) {
+                    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "youAreHerePulse")
+                    transition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 1f,
+                        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                            tween<Float>(2000, easing = androidx.compose.animation.core.LinearOutSlowInEasing)
+                        ),
+                        label = "pulse"
+                    ).value
+                } else 0f
                 val cameraPositionState = rememberCameraPositionState {
                     position = CameraPosition.fromLatLngZoom(LatLng(userLat, userLng), 14.5f)
                 }
@@ -740,8 +887,16 @@ fun ClinicLocatorScreen(navController: NavController) {
                 // A tapped pin frames you and that clinic together, and brings its card into view
                 // in the sheet so the map and the list agree on which clinic is in focus.
                 LaunchedEffect(focusedClinic) {
-                    val clinic = focusedClinic ?: return@LaunchedEffect
+                    val clinic = focusedClinic
+                    val cameFromNothing = previousFocus == null
+                    previousFocus = clinic
+                    if (clinic == null) return@LaunchedEffect
                     val index = clinics.indexOf(clinic)
+                    if (index >= 0 && pagerState.currentPage != index) {
+                        // Jump when the cards are just appearing, glide when they're already up.
+                        if (cameFromNothing) pagerState.scrollToPage(index) else launch { pagerState.animateScrollToPage(index) }
+                    }
+                    if (scaffoldState.bottomSheetState.currentValue == SheetValue.Expanded) launch { scaffoldState.bottomSheetState.partialExpand() }
                     // Before the camera move, not alongside it -- run concurrently, a long scroll
                     // to a far-down card was getting cut off partway.
                     if (index >= 0) sheetListState.animateScrollToItem(itemsBeforeClinics + index)
@@ -752,6 +907,13 @@ fun ClinicLocatorScreen(navController: NavController) {
                             .build()
                         try {
                             cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 160))
+                            // Fitting both points can go wrong (a clinic only a few hundred metres
+                            // away, or padding that leaves almost no room) and land zoomed out on the
+                            // whole continent. Keep the view at street level around the clinic.
+                            val zoom = cameraPositionState.position.zoom
+                            if (zoom < 12f || zoom > 17f) {
+                                cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(LatLng(clinic.lat, clinic.lng), zoom.coerceIn(13f, 16.5f)))
+                            }
                         } catch (e: IllegalStateException) {
                             // Map not laid out yet -- the route still draws, just without re-framing.
                         }
@@ -762,7 +924,8 @@ fun ClinicLocatorScreen(navController: NavController) {
                     // The sheet is taller than the space above the tab bar; clip it so the hidden
                     // part doesn't show through below the bar.
                     modifier = Modifier.clipToBounds(),
-                    sheetPeekHeight = CLINIC_SHEET_PEEK,
+                    scaffoldState = scaffoldState,
+                    sheetPeekHeight = sheetPeek,
                     sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
                     sheetContainerColor = DermaPageBackground,
                     sheetShadowElevation = 12.dp,
@@ -781,7 +944,8 @@ fun ClinicLocatorScreen(navController: NavController) {
                                         clinic = clinic,
                                         route = routes[clinic.name],
                                         selected = clinic == focusedClinic,
-                                        onClick = { focusedClinic = clinic; selectedClinic = clinic }
+                                        // Focus only: the card row that opens on the map offers Details.
+                                        onClick = { focusedClinic = clinic }
                                     )
                                 }
                                 // Only the cards on screen at open get the entrance animation: it
@@ -798,8 +962,11 @@ fun ClinicLocatorScreen(navController: NavController) {
                             modifier = Modifier.fillMaxSize(),
                             cameraPositionState = cameraPositionState,
                             // Keeps centering/framing inside the strip the sheet and toggle leave visible.
-                            contentPadding = PaddingValues(top = topControls, bottom = CLINIC_SHEET_PEEK),
+                            // Extra room on top while a clinic is focused, so its name bubble isn't
+                            // framed under the Map/List toggle.
+                            contentPadding = PaddingValues(top = topControls + if (focusedClinic != null) 72.dp else 0.dp, bottom = mapBottomPadding),
                             uiSettings = MapUiSettings(zoomControlsEnabled = false, myLocationButtonEnabled = false),
+                            properties = MapProperties(mapStyleOptions = mapStyle),
                             onMapClick = { focusedClinic = null }
                         ) {
                             // Real bug, same family as the earlier hardcoded-Tarlac fallback: when
@@ -809,10 +976,23 @@ fun ClinicLocatorScreen(navController: NavController) {
                             // there claimed a location the app had just said, one card below, that it
                             // didn't actually know.
                             if (!locationUnavailable) {
+                                if (pulseEnabled) {
+                                    // Radius in metres, sized from the zoom so the ring looks the same on screen at any zoom.
+                                    val metersPerDp = 156543.03392 * Math.cos(Math.toRadians(userLat)) /
+                                        Math.pow(2.0, cameraPositionState.position.zoom.toDouble())
+                                    Circle(
+                                        center = LatLng(userLat, userLng),
+                                        radius = metersPerDp * (12.0 + 30.0 * pulse),
+                                        fillColor = Color(0xFF7C3AED).copy(alpha = 0.22f * (1f - pulse)),
+                                        strokeColor = Color(0xFF7C3AED).copy(alpha = 0.30f * (1f - pulse)),
+                                        strokeWidth = 2f
+                                    )
+                                }
                                 Marker(
                                     state = MarkerState(position = LatLng(userLat, userLng)),
                                     title = "You are here",
-                                    icon = userDotIcon
+                                    icon = userDotIcon,
+                                    anchor = Offset(0.5f, 0.5f)
                                 )
                             }
                             // Only the clinic in focus gets a route -- twenty overlapping lines at
@@ -820,10 +1000,14 @@ fun ClinicLocatorScreen(navController: NavController) {
                             focusedClinic?.let { clinic ->
                                 val routePoints = routes[clinic.name]?.points
                                     ?: listOf(LatLng(userLat, userLng), LatLng(clinic.lat, clinic.lng))
-                                Polyline(points = routePoints, color = Color(0xFF7C3AED), width = 10f)
+                                // White casing under a bold purple line, rounded ends -- reads clearly over any street.
+                                val density = context.resources.displayMetrics.density
+                                Polyline(points = routePoints, color = Color.White, width = 10f * density, jointType = JointType.ROUND, startCap = RoundCap(), endCap = RoundCap())
+                                Polyline(points = routePoints, color = Color(0xFF7C3AED), width = 6f * density, jointType = JointType.ROUND, startCap = RoundCap(), endCap = RoundCap())
                             }
                             clinics.forEach { clinic ->
-                                val pinIcon = markerIcons[clinic.openNow]?.let { if (clinic == focusedClinic) it.second else it.first }
+                                val pinIcon = if (clinic == focusedClinic) focusedPinIcon ?: markerIcons[clinic.openNow]?.second
+                                    else markerIcons[clinic.openNow]?.first
                                 Marker(
                                     state = MarkerState(position = LatLng(clinic.lat, clinic.lng)),
                                     title = clinic.name,
@@ -848,6 +1032,42 @@ fun ClinicLocatorScreen(navController: NavController) {
                                 mapScope.launch { cameraPositionState.animate(CameraUpdateFactory.zoomOut()) }
                             }
                         }
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = carouselVisible,
+                            enter = androidx.compose.animation.slideInVertically(tween(300)) { it } + fadeIn(tween(300)),
+                            exit = androidx.compose.animation.slideOutVertically(tween(220)) { it } + fadeOut(tween(220)),
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            androidx.compose.animation.AnimatedVisibility(
+                                // Always up with the cards (when there's more than one to swipe to).
+                                visible = clinics.size > 1,
+                                enter = fadeIn(tween(250)),
+                                exit = fadeOut(tween(200))
+                            ) {
+                                MapHintPill(icon = Icons.Default.Swipe, text = "Swipe to see more clinics")
+                            }
+                            androidx.compose.foundation.pager.HorizontalPager(
+                                state = pagerState,
+                                contentPadding = PaddingValues(horizontal = 24.dp),
+                                pageSpacing = 12.dp,
+                                verticalAlignment = Alignment.Bottom,
+                                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Nearby clinics. Swipe left or right to move between them." }
+                            ) { page ->
+                                clinics.getOrNull(page)?.let { clinic ->
+                                    // Room for the card's shadow, which the pager would otherwise clip.
+                                    Box(modifier = Modifier.padding(vertical = 14.dp)) {
+                                        ClinicCarouselCard(
+                                            clinic = clinic,
+                                            route = routes[clinic.name],
+                                            onDirections = { openDirections(clinic) },
+                                            onDetails = { selectedClinic = clinic }
+                                        )
+                                    }
+                                }
+                            }
+                            }
+                        }
                         // Routes only draw for the tapped pin, so say so -- otherwise the map looks
                         // like it simply has no directions.
                         androidx.compose.animation.AnimatedVisibility(
@@ -856,17 +1076,7 @@ fun ClinicLocatorScreen(navController: NavController) {
                             exit = fadeOut(tween(200)),
                             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = CLINIC_SHEET_PEEK + 16.dp)
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .shadow(6.dp, RoundedCornerShape(50))
-                                    .background(Color(0xFF1F2937), RoundedCornerShape(50))
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.TouchApp, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Tap a pin to see its route", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                            }
+                            MapHintPill(icon = Icons.Default.TouchApp, text = "Tap a pin to see its route")
                         }
                     }
                 }
@@ -1118,6 +1328,72 @@ fun CompactClinicCard(clinic: Clinic, route: RouteInfo? = null, selected: Boolea
     }
 }
 
+/**
+ * One card in the map's swipeable row (shown while a clinic is focused): the clinic's essentials
+ * plus its two actions. Swiping the row moves the map's focus to the next clinic.
+ */
+@Composable
+private fun ClinicCarouselCard(clinic: Clinic, route: RouteInfo?, onDirections: () -> Unit, onDetails: () -> Unit) {
+    val settings = LocalAppSettings.current
+    val shape = RoundedCornerShape(24.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(14.dp, shape, ambientColor = Color(0x334C1D95), spotColor = Color(0x334C1D95))
+            .then(if (settings.highContrast) Modifier.border(1.dp, HcBorder, shape) else Modifier)
+            .clip(shape)
+            .background(Color.White)
+            .clickable { onDetails() }
+            .padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.Top) {
+            ClinicIconTile(size = 44.dp)
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    clinic.name,
+                    fontSize = settings.textMd.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF111827),
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    "${clinicDistanceLabel(clinic, route)} · ${todaysHoursLine(clinic.hours)}",
+                    fontSize = settings.textBase.sp,
+                    color = DermaSubtle,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            StatusPill(clinic.openNow, short = true)
+        }
+        Spacer(modifier = Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            PillButton(text = "Directions", icon = Icons.Default.Directions, height = 44.dp, modifier = Modifier.weight(1f), onClick = onDirections)
+            PillButton(text = "Details", icon = Icons.Outlined.Info, container = DermaGreenLight, content = DermaGreenDark, height = 44.dp, modifier = Modifier.weight(1f), onClick = onDetails)
+        }
+    }
+}
+
+/** Dark floating pill with an icon: the map's one-line hints ("Tap a pin…", "Swipe to see more…"). */
+@Composable
+private fun MapHintPill(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
+    Row(
+        modifier = Modifier
+            .shadow(6.dp, RoundedCornerShape(50))
+            .background(Color(0xFF1F2937), RoundedCornerShape(50))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+    }
+}
+
 @Composable
 fun FullClinicCard(clinic: Clinic, route: RouteInfo? = null, onClick: () -> Unit) {
     val settings = LocalAppSettings.current
@@ -1163,6 +1439,9 @@ private fun openStatus(openNow: Boolean?) = when (openNow) {
 
 /** How much of the clinic sheet shows over the map before it's dragged up. */
 private val CLINIC_SHEET_PEEK = 340.dp
+
+/** Map space kept clear at the bottom while the clinic card row is showing. */
+private val CLINIC_CAROUSEL_SPACE = 200.dp
 
 /** Floating "Map View | List View" pill -- the one switch between the two layouts. */
 @Composable
