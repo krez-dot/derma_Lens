@@ -204,15 +204,6 @@ fun ProfileScreen(navController: NavController) {
                     ProfileMenuItem(icon = Icons.Default.Schedule, iconBg = Color(0xFFEFF6FF), iconTint = Color(0xFF2563EB), title = "Reminder Time", subtitle = formatReminderTime(context, reminderHour, reminderMinute), onClick = { showTimePicker = true })
                 }
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
-                // Fires a real notification ~5s later via a one-time WorkRequest, not a fake
-                // in-app toast pretending to be one -- see NotificationScheduler.scheduleTestReminder
-                // and feedback_workmanager_testing memory: force-running a periodic job directly is
-                // unreliable, a genuine OneTimeWorkRequest is the reliable way to demo this on demand.
-                ProfileMenuItem(icon = Icons.Default.NotificationsActive, iconBg = Color(0xFFFEF3C7), iconTint = Color(0xFFD97706), title = "Test Notification", subtitle = "Send a sample reminder in ~5 seconds", onClick = {
-                    com.dermalens.app.worker.NotificationScheduler.scheduleTestReminder(context)
-                    android.widget.Toast.makeText(context, "Test notification queued -- check your notification shade in ~5s", android.widget.Toast.LENGTH_SHORT).show()
-                })
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
                 ProfileMenuItemSwitch(icon = Icons.Default.Science, iconBg = Color(0xFFF5F3FF), iconTint = Color(0xFF7C3AED), title = "Contribute to Research", subtitle = if (contributeData) "Your scans help improve DermaLens" else "Help us improve for Filipino skin tones", checked = contributeData, onCheckedChange = {
                     if (it) {
                         showContributeDialog = true

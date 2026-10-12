@@ -94,13 +94,6 @@ object NotificationScheduler {
         WorkManager.getInstance(context).cancelUniqueWork(ScanReminderWorker.WORK_NAME)
     }
 
-    fun scheduleTestReminder(context: Context) {
-        val testRequest = OneTimeWorkRequestBuilder<ScanReminderWorker>()
-            .setInitialDelay(5, TimeUnit.SECONDS)
-            .build()
-
-        WorkManager.getInstance(context).enqueue(testRequest)
-    }
 }
 
 /** Schedules/cancels [ContributionUploadWorker], gated on the same "Contribute to Research"
