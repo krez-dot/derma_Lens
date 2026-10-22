@@ -55,7 +55,12 @@ class ScanReminderWorker(
         val randomMessage = messages.random()
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            // Status-bar icon: the logo's owl as a white silhouette (Android draws small icons from
+            // their alpha only), tinted with the app's purple where the system allows colour.
+            .setSmallIcon(com.dermalens.app.R.drawable.ic_stat_dermalens)
+            .setColor(0xFF7C3AED.toInt())
+            // The full-colour logo beside the message.
+            .setLargeIcon(android.graphics.BitmapFactory.decodeResource(context.resources, com.dermalens.app.R.drawable.dermalens_logo))
             .setContentTitle("DermaLens Reminder 🌿")
             .setContentText(randomMessage)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)

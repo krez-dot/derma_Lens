@@ -6,6 +6,14 @@ Methodology: static code review + manifest/configuration audit, cross-checked ag
 
 > **Update 2026-09-17**: a lot changed underneath this doc since 2026-08-24 — Firebase Authentication replaced the local password system entirely, and the Contribute to Research upload pipeline was built and shipped. Two entries below (SEC-02/SEC-03, SEC-11) describe an architecture that no longer exists; see the correction notes inline rather than trusting their original "✅ Pass" verdicts at face value. One new real finding (SEC-F5) came out of this pass.
 
+> **Update 2026-10-22 (app 1.2.0, pre-defense re-check)**: re-verified the platform settings and tested the two embedded credentials live.
+> - Unchanged and still passing: HTTPS only (`usesCleartextTraffic="false"`), only the launcher activity exported, no WebView, no emails/tokens/passwords in logs, and the Room database plus `scan_photos/` excluded from backup and device transfer.
+> - **Maps API key (new test):** a Places request with the key but no Android package/certificate headers was rejected with `403 API_KEY_ANDROID_APP_BLOCKED` — the key is restricted to the app.
+> - **Research upload endpoint (new test):** a POST with a wrong secret returned `{"status":"error","message":"unauthorized"}`. Accepted limit: the real secret is in the APK and could be extracted to upload junk images; no user data is exposed.
+> - **SEC-F3 resolved:** every scan photo (camera and gallery) is cropped and re-encoded with `Bitmap.compress` before it is saved or uploaded, which drops EXIF (GPS, device). The original gallery file is never used as a fallback.
+> - **SEC-F4 resolved:** destructive migration now applies only to pre-launch versions 1–6; versions 7→11 each have a real `Migration`.
+> - **Firestore rules** reviewed (owner-only backup, verified email for writes, forge-proof vote counts). The live console rules were found to be the pre-1.2.0 version and were republished from `firestore.rules` the same day.
+
 ---
 
 ## Summary

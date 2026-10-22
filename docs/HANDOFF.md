@@ -14,6 +14,13 @@ Status: Firebase Auth live. **Multi-class merge is done (v2), and the bundled mo
 - **The Android system Photo Picker gets cluttered** by every screenshot taken during testing (they get indexed into the same "Recent" media view). Periodically `adb shell rm -f /sdcard/*.png` + `am force-stop com.android.providers.media.module` to reset it if the picker gets hard to navigate.
 - **Windows Gradle builds can hit a file lock on `R.jar`** — VS Code's Kotlin/Java language server respawns `java.exe` almost immediately after being killed. Loop-kill java processes a few times with short sleeps between each, then retry the build immediately.
 - Full team onboarding steps (Android Studio, `google-services.json`) are in `SETUP.md`.
+- **Building an installable release APK (the defense/demo build).** `build.gradle.kts` has no release `signingConfig`, so a plain `assembleRelease` gives an APK that won't install. Sign it with the debug keystore instead — its SHA-1 is the one registered in Firebase, so Google sign-in keeps working (a new release key would need its SHA-1 added in the Firebase console first). From the repo root, in PowerShell:
+  ```powershell
+  $ks = "$env:USERPROFILE\.android\debug.keystore"
+  .\gradlew.bat assembleRelease "-Pandroid.injected.signing.store.file=$ks" "-Pandroid.injected.signing.store.password=android" "-Pandroid.injected.signing.key.alias=androiddebugkey" "-Pandroid.injected.signing.key.password=android"
+  ```
+  Output: `app\build\outputs\apk\release\app-release.apk`. Install with `adb install -r app-release.apk` — `-r` keeps the phone's scan history; it only works over an older build signed with the same key.
+- **`best.tflite` is gitignored** (80.5 MB). A fresh clone has no model: copy it into `app/src/main/assets/best.tflite` before building. The exact bundled file (SHA-1 `957c946f…`) is `weights/best.tflite` in the `dermalens_multiclass_v2_ft_background_run` folder (Mark's Downloads); its `best.pt` is in Drive under `dermalens_runs/multiclass_v2_ft_background/weights/`.
 
 ---
 
@@ -164,8 +171,13 @@ See the dedicated section above — this used to be local-only, now it's a real 
 | 4 | Added `firebaseUid`, `isGuest` to User (Firebase Auth) |
 | 5 | Removed `isGuest` from User (guest mode removed) |
 | 6 | Added `uploadedForTraining` to ScanRecord (Contribute to Research upload tracking) |
+| 7 | Added `trackGroupId` to ScanRecord (Progress trends per tracked spot) |
+| 8 | Added `boundingBoxes` to ScanRecord (real `MIGRATION_7_8`) |
+| 9 | Normalized to 3NF to match the ERD (real `MIGRATION_8_9`, app 1.2.0): `trackGroupId` became a `track_groups` table (owner `userId` moved onto it), `boundingBoxes` became a `bounding_boxes` table, `severity` dropped. Real `@ForeignKey`s with `ON DELETE CASCADE` |
+| 10 | Dropped dead `users.passwordHash` and `users.notificationEnabled` via a table rebuild (real `MIGRATION_9_10`) |
+| 11 | Renamed `scan_records.id` to `scanId` (rebuilds `scan_records` + `bounding_boxes`) and made `users.fullName` nullable — names are never guessed from the email or Google profile; Home asks "How should we call you?" when it's empty (real `MIGRATION_10_11`) |
 
-Still uses `fallbackToDestructiveMigration()` — acceptable for dev/capstone, wipes local data on every version bump. **Known consequence, hit for real this pass**: a version bump can wipe the `users` table while a logged-in session persists in `SharedPreferences`, which silently broke "Save to History" until the self-heal fix (see Auth section).
+Versions 1–6 still wipe destructively (`fallbackToDestructiveMigrationFrom(1..6)`, pre-launch dev builds only); from v7 on, every schema bump needs a real `Migration` in `DermaDatabase.kt`. **Known consequence of the old wipes**: a version bump could wipe the `users` table while a logged-in session persisted in `SharedPreferences`, which silently broke "Save to History" until the self-heal fix (see Auth section).
 
 ## Known Non-Issues (VS Code)
 

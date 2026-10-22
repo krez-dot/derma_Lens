@@ -1,49 +1,81 @@
 package com.dermalens.app.data.db
 
 import androidx.room.*
+import com.dermalens.app.data.model.BoundingBox
 import com.dermalens.app.data.model.ScanRecord
+import com.dermalens.app.data.model.TrackGroup
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ScanRecordDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    // ABORT, not REPLACE: REPLACE deletes the old row before inserting, and with the cascading
+    // foreign keys that silently took the scan's bounding boxes with it. Re-saves use updateScan.
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertScan(scan: ScanRecord): Long
 
-    @Query("SELECT * FROM scan_records WHERE userId = :userId ORDER BY scanDate DESC")
+    @Update
+    suspend fun updateScan(scan: ScanRecord)
+
+    // A scan's owner lives on its track group, so every "this user's scans" query goes through it.
+    @Query("SELECT s.* FROM scan_records s INNER JOIN track_groups g ON s.groupId = g.groupId WHERE g.userId = :userId ORDER BY s.scanDate DESC")
     fun getScansByUser(userId: Int): Flow<List<ScanRecord>>
 
-    @Query("SELECT * FROM scan_records WHERE userId = :userId ORDER BY scanDate DESC")
+    @Query("SELECT s.* FROM scan_records s INNER JOIN track_groups g ON s.groupId = g.groupId WHERE g.userId = :userId ORDER BY s.scanDate DESC")
     suspend fun getScansByUserOnce(userId: Int): List<ScanRecord>
 
-    @Query("SELECT COUNT(*) FROM scan_records WHERE userId = :userId")
-    suspend fun getScanCount(userId: Int): Int
-
-    @Query("SELECT * FROM scan_records WHERE userId = :userId AND condition = :condition ORDER BY scanDate ASC")
-    suspend fun getScansByCondition(userId: Int, condition: String): List<ScanRecord>
-
-    @Query("DELETE FROM scan_records WHERE id = :scanId")
-    suspend fun deleteScan(scanId: Int)
-
-    @Query("SELECT * FROM scan_records WHERE id = :scanId LIMIT 1")
+    @Query("SELECT * FROM scan_records WHERE scanId = :scanId LIMIT 1")
     suspend fun getScanById(scanId: Int): ScanRecord?
 
-    @Query("SELECT DISTINCT condition FROM scan_records WHERE userId = :userId")
+    @Query("SELECT DISTINCT s.condition FROM scan_records s INNER JOIN track_groups g ON s.groupId = g.groupId WHERE g.userId = :userId")
     suspend fun getConditionsByUser(userId: Int): List<String>
 
-    // Scans the user consented to contribute, saved locally, but not yet uploaded to Firebase
-    // Storage -- what ContributionUploadWorker works through on each run.
+    // Scans the user consented to contribute, saved locally, but not yet uploaded to Google
+    // Drive -- what ContributionUploadWorker works through on each run.
     @Query("SELECT * FROM scan_records WHERE contributedForTraining = 1 AND uploadedForTraining = 0 AND imagePath != ''")
     suspend fun getPendingContributions(): List<ScanRecord>
 
-    @Query("UPDATE scan_records SET uploadedForTraining = 1 WHERE id = :scanId")
+    @Query("UPDATE scan_records SET uploadedForTraining = 1 WHERE scanId = :scanId")
     suspend fun markContributionUploaded(scanId: Int)
 
-    @Query("UPDATE scan_records SET notes = :notes WHERE id = :scanId")
+    @Query("UPDATE scan_records SET notes = :notes WHERE scanId = :scanId")
     suspend fun updateNotes(scanId: Int, notes: String)
 
-    // Called right after inserting a brand-new (non-continuing) scan, so it becomes the root of
-    // its own trackGroupId instead of staying null -- see ScanRecord.trackGroupId.
-    @Query("UPDATE scan_records SET trackGroupId = :trackGroupId WHERE id = :scanId")
-    suspend fun setTrackGroupId(scanId: Int, trackGroupId: Int)
+    @Query("DELETE FROM scan_records WHERE scanId = :scanId")
+    suspend fun deleteScanRow(scanId: Int)
+
+    @Query("DELETE FROM track_groups WHERE groupId NOT IN (SELECT groupId FROM scan_records)")
+    suspend fun deleteEmptyGroups()
+
+    /** Deletes a scan (its boxes go with it) and, if it was the last one, its track group. */
+    @Transaction
+    suspend fun deleteScan(scanId: Int) {
+        deleteScanRow(scanId)
+        deleteEmptyGroups()
+    }
+
+    // ── Track groups ──────────────────────────────────────────────────────
+
+    @Insert
+    suspend fun insertGroup(group: TrackGroup): Long
+
+    // "Scan Again" only continues a group that still exists and belongs to the signed-in user --
+    // its last scan may have been deleted while the camera was open.
+    @Query("SELECT * FROM track_groups WHERE groupId = :groupId AND userId = :userId LIMIT 1")
+    suspend fun getGroupForUser(groupId: Int, userId: Int): TrackGroup?
+
+    /** When this group's timeline starts -- the cloud backup's key for the group. */
+    @Query("SELECT MIN(scanDate) FROM scan_records WHERE groupId = :groupId")
+    suspend fun getGroupStartDate(groupId: Int): Long?
+
+    // ── Bounding boxes ────────────────────────────────────────────────────
+
+    @Insert
+    suspend fun insertBoxes(boxes: List<BoundingBox>)
+
+    @Query("DELETE FROM bounding_boxes WHERE scanId = :scanId")
+    suspend fun deleteBoxesForScan(scanId: Int)
+
+    @Query("SELECT * FROM bounding_boxes WHERE scanId = :scanId ORDER BY boxId")
+    suspend fun getBoxesForScan(scanId: Int): List<BoundingBox>
 }

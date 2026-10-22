@@ -42,13 +42,18 @@ import com.dermalens.app.ui.LocalAppSettings
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
+import androidx.room.withTransaction
 import com.dermalens.app.data.db.DermaDatabase
+import com.dermalens.app.data.model.BoundingBox
 import com.dermalens.app.data.model.ScanRecord
+import com.dermalens.app.data.model.TrackGroup
 import com.dermalens.app.data.model.User
 import com.dermalens.app.ui.screens.DermaPrefs
 import com.dermalens.app.ml.analysisFailedResult
+import com.dermalens.app.ml.noConditionResult
 import com.dermalens.app.ml.runYoloInference
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -77,7 +82,6 @@ data class DifferentialCandidate(
 data class DetectionResult(
     val condition: String,
     val confidence: Float,
-    val severity: String,
     val description: String,
     val symptoms: List<String>,
     val recommendation: String,
@@ -93,33 +97,43 @@ data class DetectionResult(
     // True when this isn't a real diagnosis, just a below-the-confidence-floor fallback
     // (see YoloDetector.kt). The UI hides the confidence percentage in this case -- showing
     // a number next to "no result" undermines the point of not committing to an answer.
-    val isLowConfidence: Boolean = false
+    val isLowConfidence: Boolean = false,
+    // The model saw nothing on a photo that is mostly skin (see YoloDetector.kt's
+    // noConditionResult). Still isLowConfidence -- it isn't a diagnosis either -- but it's
+    // shown as a positive result instead of a "retake" warning.
+    val isNoCondition: Boolean = false
 )
 
+/** Saved as a scan's condition when the model found none of the 6 conditions on a skin photo. */
+const val NO_CONDITION_FOUND = "No Condition Found"
+
+// Acne Vulgaris symptoms follow the NHS acne page (https://www.nhs.uk/conditions/acne/, checked
+// 2026-10-09): what a person notices, not just lesion types -- the team flagged the old list
+// ("Whiteheads, Blackheads, Papules, Pustules") as lesion names rather than symptoms.
 val mockDetectionResults = listOf(
     // The currently-bundled 6-class model still outputs "Acne Vulgaris" as one label (the acne
     // subtype split below is a standalone experiment, not yet folded into the bundled model -- see
     // training/acne_subtypes_future and train_acne_subtypes.ipynb). Keep this entry until the
     // bundled model itself is retrained on the 5 subtypes, or conditionTemplates[label] returns
     // null for a real Acne Vulgaris detection and the result screen hangs on "Analyzing your scan..."
-    DetectionResult("Acne Vulgaris", 94.3f, "Moderate", "Acne vulgaris is a common skin condition that occurs when hair follicles become clogged with oil and dead skin cells, causing whiteheads, blackheads, or pimples.", listOf("Whiteheads", "Blackheads", "Papules", "Pustules"), "Consult a dermatologist. Use gentle cleansers and avoid picking or squeezing affected areas.", Color(0xFFE53935), distinguishingFeature = "Clusters of whiteheads, blackheads, or inflamed pimples concentrated on the face, chest, or back."),
-    DetectionResult("Blackhead Acne", 94.3f, "Mild", "Blackheads are a mild, non-inflammatory form of acne that occurs when a hair follicle becomes clogged with oil and dead skin cells, and the clog's surface oxidizes and turns dark when exposed to air.", listOf("Small dark or black bumps", "Flat or slightly raised", "No redness or pain", "Common on nose, forehead, and chin"), "Use salicylic acid or benzoyl peroxide cleansers to help unclog pores. Avoid squeezing, which can cause scarring. Consult a dermatologist for persistent cases.", Color(0xFF424242), distinguishingFeature = "Small dark, flat bumps with no surrounding redness or inflammation — the clogged pore's surface has oxidized to a dark color."),
-    DetectionResult("Whitehead Acne", 92.1f, "Mild", "Whiteheads are a mild, non-inflammatory form of acne where a clogged hair follicle stays closed beneath the skin's surface, forming a small white or flesh-colored bump.", listOf("Small white or skin-colored bumps", "Closed, not open like blackheads", "No redness or pain", "Often found in clusters"), "Use gentle exfoliants or retinoid creams to help clear clogged pores. Avoid picking, which can lead to inflammation or scarring. Consult a dermatologist if it persists.", Color(0xFFFFB300), distinguishingFeature = "Small closed bumps just under the skin's surface, white or skin-toned, without the dark oxidized center seen in blackheads."),
-    DetectionResult("Papular Acne", 90.4f, "Moderate", "Papules are small, inflamed acne bumps that form when a clogged pore's walls break down, causing redness and mild swelling without visible pus.", listOf("Small red, raised bumps", "Tender to touch", "No visible pus", "Can be widespread or localized"), "Use benzoyl peroxide or topical retinoids to reduce inflammation. Avoid picking to prevent scarring. Consult a dermatologist if papules are widespread or persistent.", Color(0xFFE53935), distinguishingFeature = "Small, firm, red bumps without a visible white or yellow center — inflamed but not yet pus-filled."),
-    DetectionResult("Pustular Acne", 91.8f, "Moderate", "Pustules are inflamed acne lesions filled with pus, appearing as red bumps with a white or yellow center. They form when the body's immune response to clogged, infected pores intensifies.", listOf("Red bumps with white or yellow center", "Tender or painful", "Pus-filled", "Common on face, chest, or back"), "Use benzoyl peroxide or prescribed topical/oral antibiotics. Avoid squeezing, which can spread infection and cause scarring. Consult a dermatologist for persistent or widespread pustules.", Color(0xFFFF7043), distinguishingFeature = "Red, inflamed bumps with a distinct white or yellow pus-filled center, unlike the solid red bumps of papules."),
-    DetectionResult("Nodular Acne", 89.7f, "Severe", "Nodules are large, firm, and often painful lumps that form deep under the skin when clogged, inflamed pores damage surrounding tissue. This is a more severe form of acne that can lead to scarring.", listOf("Large, firm lumps under the skin", "Painful to touch", "Deep-seated, not surface-level", "Can persist for weeks"), "Seek dermatologist care — nodular acne often requires prescription oral medication and is prone to scarring if untreated. Avoid picking or squeezing.", Color(0xFFB71C1C), distinguishingFeature = "Large, firm, painful lumps deep under the skin, unlike the smaller surface-level bumps of other acne types."),
-    DetectionResult("Eczema", 87.6f, "Mild", "Eczema is a condition that makes your skin red and itchy. It is common in children but can occur at any age.", listOf("Dry skin", "Itching", "Red patches", "Skin flaking"), "Keep skin moisturized. Avoid known triggers. Consult a dermatologist for topical treatments.", Color(0xFFFF9800), distinguishingFeature = "Diffuse dry, itchy, red patches with no sharp border, often in skin folds like elbows and knees."),
-    DetectionResult("Melasma", 91.2f, "Mild", "Melasma is a skin condition presenting as brown or blue-gray patches, usually on the face. It is associated with hormonal changes and sun exposure.", listOf("Brown patches", "Facial discoloration", "Symmetrical patches"), "Use broad-spectrum sunscreen daily. Avoid sun exposure. Consult a dermatologist for treatment options.", Color(0xFF795548), distinguishingFeature = "Flat, symmetrical brown patches on sun-exposed areas like the cheeks and forehead — no itching or raised texture."),
-    DetectionResult("Tinea", 89.5f, "Moderate", "Tinea is a fungal infection of the skin. It can affect different parts of the body and is usually characterized by a ring-shaped rash.", listOf("Ring-shaped rash", "Itching", "Scaly skin", "Redness"), "Use antifungal cream as prescribed. Keep skin dry and clean. Consult a dermatologist.", Color(0xFF4CAF50), distinguishingFeature = "A distinct ring-shaped patch with a raised, scaly border and a clearer center, spreading outward."),
-    DetectionResult("Warts", 96.1f, "Mild", "Warts are small growths caused by the human papillomavirus (HPV). They can appear anywhere on the body and are usually harmless.", listOf("Small flesh-colored bumps", "Rough texture", "Black dots"), "Avoid touching or scratching warts. Consult a dermatologist for removal options.", Color(0xFF9C27B0), distinguishingFeature = "Small, rough-textured, flesh-colored bumps, sometimes with tiny black dots — usually not itchy or red."),
-    DetectionResult("Scabies", 88.4f, "Severe", "Scabies is an itchy skin condition caused by a tiny burrowing mite. The intense itching associated with scabies is an allergic reaction to the mite.", listOf("Intense itching", "Thin burrow tracks", "Rash", "Sores"), "Seek immediate medical attention. Treatment requires prescription medication. Wash all clothing and bedding.", Color(0xFF1E88E5), distinguishingFeature = "Intense itching that's worse at night, with thin thread-like burrow tracks, often between fingers or on wrists.")
+    DetectionResult("Acne Vulgaris", 94.3f, "Acne vulgaris is a common skin condition that occurs when hair follicles become clogged with oil and dead skin cells, causing whiteheads, blackheads, or pimples.", listOf("Whiteheads and blackheads", "Red bumps or pus-filled pimples", "Oily skin", "Spots that feel sore or hot", "Painful lumps under the skin (severe acne)", "Dark marks or scars after spots heal"), "Consult a dermatologist for an accurate diagnosis, especially if the spots are painful, widespread, or leaving marks.", Color(0xFFE53935), distinguishingFeature = "Clusters of whiteheads, blackheads, or inflamed pimples concentrated on the face, chest, or back."),
+    DetectionResult("Blackhead Acne", 94.3f, "Blackheads are a mild, non-inflammatory form of acne that occurs when a hair follicle becomes clogged with oil and dead skin cells, and the clog's surface oxidizes and turns dark when exposed to air.", listOf("Small dark or black bumps", "Flat or slightly raised", "No redness or pain", "Common on nose, forehead, and chin"), "Consult a dermatologist for an accurate diagnosis, especially if the blackheads persist or spread.", Color(0xFF424242), distinguishingFeature = "Small dark, flat bumps with no surrounding redness or inflammation — the clogged pore's surface has oxidized to a dark color."),
+    DetectionResult("Whitehead Acne", 92.1f, "Whiteheads are a mild, non-inflammatory form of acne where a clogged hair follicle stays closed beneath the skin's surface, forming a small white or flesh-colored bump.", listOf("Small white or skin-colored bumps", "Closed, not open like blackheads", "No redness or pain", "Often found in clusters"), "Consult a dermatologist for an accurate diagnosis, especially if the bumps persist or spread.", Color(0xFFFFB300), distinguishingFeature = "Small closed bumps just under the skin's surface, white or skin-toned, without the dark oxidized center seen in blackheads."),
+    DetectionResult("Papular Acne", 90.4f, "Papules are small, inflamed acne bumps that form when a clogged pore's walls break down, causing redness and mild swelling without visible pus.", listOf("Small red, raised bumps", "Tender to touch", "No visible pus", "Can be widespread or localized"), "Consult a dermatologist for an accurate diagnosis, especially if the bumps are widespread or persistent.", Color(0xFFE53935), distinguishingFeature = "Small, firm, red bumps without a visible white or yellow center — inflamed but not yet pus-filled."),
+    DetectionResult("Pustular Acne", 91.8f, "Pustules are inflamed acne lesions filled with pus, appearing as red bumps with a white or yellow center. They form when the body's immune response to clogged, infected pores intensifies.", listOf("Red bumps with white or yellow center", "Tender or painful", "Pus-filled", "Common on face, chest, or back"), "Consult a dermatologist for an accurate diagnosis, especially if the pustules are painful, widespread, or persistent.", Color(0xFFFF7043), distinguishingFeature = "Red, inflamed bumps with a distinct white or yellow pus-filled center, unlike the solid red bumps of papules."),
+    DetectionResult("Nodular Acne", 89.7f, "Nodules are large, firm, and often painful lumps that form deep under the skin when clogged, inflamed pores damage surrounding tissue. This is a more severe form of acne that can lead to scarring.", listOf("Large, firm lumps under the skin", "Painful to touch", "Deep-seated, not surface-level", "Can persist for weeks"), "Consult a dermatologist soon for an accurate diagnosis, since deep, painful lumps can leave scars if left unchecked.", Color(0xFFB71C1C), distinguishingFeature = "Large, firm, painful lumps deep under the skin, unlike the smaller surface-level bumps of other acne types."),
+    DetectionResult("Eczema", 87.6f, "Eczema is a condition that makes your skin red and itchy. It is common in children but can occur at any age.", listOf("Dry skin", "Itching", "Red patches", "Skin flaking"), "Consult a dermatologist for an accurate diagnosis, especially if the itching affects your sleep or the patches spread or crack.", Color(0xFFFF9800), distinguishingFeature = "Diffuse dry, itchy, red patches with no sharp border, often in skin folds like elbows and knees."),
+    DetectionResult("Melasma", 91.2f, "Melasma is a skin condition presenting as brown or blue-gray patches, usually on the face. It is associated with hormonal changes and sun exposure.", listOf("Brown patches", "Facial discoloration", "Symmetrical patches"), "Consult a dermatologist for an accurate diagnosis, since other conditions can also cause dark patches on the skin.", Color(0xFF795548), distinguishingFeature = "Flat, symmetrical brown patches on sun-exposed areas like the cheeks and forehead — no itching or raised texture."),
+    DetectionResult("Tinea", 89.5f, "Tinea is a fungal infection of the skin. It can affect different parts of the body and is usually characterized by a ring-shaped rash.", listOf("Ring-shaped rash", "Itching", "Scaly skin", "Redness"), "Consult a dermatologist for an accurate diagnosis before using any cream, since tinea can look like eczema and other rashes.", Color(0xFF4CAF50), distinguishingFeature = "A distinct ring-shaped patch with a raised, scaly border and a clearer center, spreading outward."),
+    DetectionResult("Warts", 96.1f, "Warts are small growths caused by the human papillomavirus (HPV). They can appear anywhere on the body and are usually harmless.", listOf("Small flesh-colored bumps", "Rough texture", "Black dots"), "Consult a dermatologist for an accurate diagnosis, especially if the growth bleeds, hurts, changes, or keeps spreading.", Color(0xFF9C27B0), distinguishingFeature = "Small, rough-textured, flesh-colored bumps, sometimes with tiny black dots — usually not itchy or red."),
+    DetectionResult("Scabies", 88.4f, "Scabies is an itchy skin condition caused by a tiny burrowing mite. The intense itching associated with scabies is an allergic reaction to the mite.", listOf("Intense itching", "Thin burrow tracks", "Rash", "Sores"), "Consult a doctor or dermatologist soon for an accurate diagnosis, since scabies can spread to others through close skin contact.", Color(0xFF1E88E5), distinguishingFeature = "Intense itching that's worse at night, with thin thread-like burrow tracks, often between fingers or on wrists.")
 )
 
 /**
  * Inserts or updates this scan's history row. Shared by both the "Save to Progress" and
  * "Contribute to Research" buttons so a user who taps both ends up with one row, not two --
- * passing back the previous call's returned id makes the second insert an update (Room's
- * REPLACE conflict strategy) rather than a duplicate. [contribute] controls only whether the
+ * passing back the previous call's returned id makes the second save an update rather than a
+ * duplicate. [contribute] controls only whether the
  * image gets copied out and the row flagged for upload; it never happens as a side effect of
  * plain saving.
  */
@@ -129,7 +143,7 @@ private suspend fun saveScan(
     imageUri: String?,
     existingScanId: Int?,
     contribute: Boolean,
-    continueTrackGroupId: Int? = null
+    continueGroupId: Int? = null
 ): Int? {
     val db = DermaDatabase.getDatabase(context)
     val prefs = context.getSharedPreferences(DermaPrefs.PREFS_NAME, android.content.Context.MODE_PRIVATE)
@@ -139,7 +153,8 @@ private suspend fun saveScan(
         // No local profile row for this logged-in session (e.g. it was lost to a schema
         // migration) -- self-heal the same way Login's sign-in flow does, so saving a scan
         // doesn't silently no-op.
-        db.userDao().insertUser(User(fullName = savedEmail.substringBefore("@"), email = savedEmail, passwordHash = ""))
+        val firebaseUser = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+        db.userDao().insertUser(User(fullName = firebaseUser?.let { chosenDisplayName(it) }, email = savedEmail, firebaseUid = firebaseUser?.uid))
         user = db.userDao().getUserByEmail(savedEmail)
     }
     if (user == null) return existingScanId
@@ -170,44 +185,56 @@ private suspend fun saveScan(
     val notes = existingRecord?.notes
         ?: "Scanned on ${java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault()).format(java.util.Date())}"
 
-    // Preserve a group already assigned by an earlier save of this same row (e.g. Save to
-    // Progress, then Contribute to Research afterward); otherwise use whatever this save call
-    // was told to continue (set from "Scan Again"'s specific card, or null from "Start New Scan"
-    // / a fresh Scan tab entry).
-    val groupIdForInsert = existingRecord?.trackGroupId ?: continueTrackGroupId
-
-    val id = db.scanRecordDao().insertScan(
-        ScanRecord(
-            id = existingScanId ?: 0,
-            userId = user.userId,
+    // Everything from here is NonCancellable. saveScan runs on the screen's own coroutine scope,
+    // so navigating away mid-save would cancel it; once the write starts it finishes. The group,
+    // the scan and its boxes go in one transaction, so a failure can't leave a group with no scan
+    // or a scan missing its boxes.
+    val id = withContext(NonCancellable) {
+    val dao = db.scanRecordDao()
+    val newId = db.withTransaction {
+        // Keep the group from an earlier save of this same row (e.g. Save to Progress, then
+        // Contribute to Research afterward); otherwise continue the card "Scan Again" came from,
+        // if it still exists; otherwise ("Start New Scan" / a fresh Scan tab entry) start a group.
+        val groupId = existingRecord?.groupId
+            ?: continueGroupId?.let { dao.getGroupForUser(it, user.userId)?.groupId }
+            ?: dao.insertGroup(TrackGroup(userId = user.userId)).toInt()
+        val record = ScanRecord(
+            scanId = existingRecord?.scanId ?: 0,
+            groupId = groupId,
             condition = result.condition,
             confidence = result.confidence,
-            severity = result.severity,
             notes = notes,
             // Keep the original time on a re-save (Save, then "Yes, contribute"). It's also the
             // scan's backup key, so a fresh timestamp left an orphaned cloud entry behind that
             // the next sync "restored" as a photo-less duplicate.
             scanDate = existingRecord?.scanDate ?: System.currentTimeMillis(),
             imagePath = savedImagePath,
-            contributedForTraining = contribute && savedImagePath.isNotEmpty(),
-            trackGroupId = groupIdForInsert
+            contributedForTraining = contribute && savedImagePath.isNotEmpty()
         )
-    ).toInt()
-
-    // A genuinely new, non-continuing scan has no group yet (groupIdForInsert was null) --
-    // becomes the root of its own group using its own freshly-assigned id.
-    if (groupIdForInsert == null) {
-        db.scanRecordDao().setTrackGroupId(id, id)
+        val scanId = if (existingRecord != null) {
+            dao.updateScan(record)
+            existingRecord.scanId
+        } else {
+            dao.insertScan(record).toInt()
+        }
+        // Only alongside a saved photo: boxes with no image to draw on mean nothing.
+        dao.deleteBoxesForScan(scanId)
+        if (savedImagePath.isNotEmpty()) {
+            dao.insertBoxes(result.boundingBoxes.map { BoundingBox(scanId = scanId, left = it.left, top = it.top, right = it.right, bottom = it.bottom) })
+        }
+        scanId
     }
     // Opt-in cloud backup of the record (never the photo). Fire-and-forget: Firestore queues it
     // while offline, so saving never waits on the network. No-op when backup is off.
-    db.scanRecordDao().getScanById(id)?.let { com.dermalens.app.data.sync.ScanHistorySync.pushScan(context, it) }
+    dao.getScanById(newId)?.let { com.dermalens.app.data.sync.ScanHistorySync.pushScan(context, it) }
+    newId
+    }
     return id
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScanResultScreen(navController: NavController, imageUri: String? = null, scanId: Int = -1, continueTrackGroupId: Int = -1) {
+fun ScanResultScreen(navController: NavController, imageUri: String? = null, scanId: Int = -1, continueGroupId: Int = -1) {
     val settings = LocalAppSettings.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -224,9 +251,13 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                 val record = DermaDatabase.getDatabase(context).scanRecordDao().getScanById(scanId)
                 if (record == null) {
                     analysisFailedResult()
+                } else if (record.condition == NO_CONDITION_FOUND) {
+                    noConditionResult(record.confidence)
                 } else {
                     val template = mockDetectionResults.associateBy { it.condition }[record.condition]
-                    template?.copy(confidence = record.confidence, severity = record.severity) ?: analysisFailedResult()
+                    val boxes = DermaDatabase.getDatabase(context).scanRecordDao().getBoxesForScan(scanId)
+                        .map { NormalizedBox(it.left, it.top, it.right, it.bottom) }
+                    template?.copy(confidence = record.confidence, boundingBoxes = boxes) ?: analysisFailedResult()
                 }
             } else {
                 // Never fall back to mockDetectionResults.random() here: that turned any
@@ -294,7 +325,8 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     // retaking) still leaves the user somewhere useful instead of a dead end.
     // Saveable for the same reason as isSaved: otherwise it re-pops every time the user comes
     // back to this screen from another one.
-    var showLowConfidenceDialog by rememberSaveable { mutableStateOf(result.isLowConfidence) }
+    // Not for No Condition Found: that's a real (good) outcome, not a reason to retake.
+    var showLowConfidenceDialog by rememberSaveable { mutableStateOf(result.isLowConfidence && !result.isNoCondition) }
     // Set true only when Save to Progress actually also triggered a research upload (contribute
     // toggle on + image copy succeeded) -- not on every save, since most saves don't contribute.
     var showContributionDialog by remember { mutableStateOf(false) }
@@ -332,7 +364,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                 Button(onClick = {
                     showContributePrompt = false
                     scope.launch {
-                        savedScanId = saveScan(context, result, imageUri, savedScanId, contribute = true, continueTrackGroupId = continueTrackGroupId.takeIf { it != -1 })
+                        savedScanId = saveScan(context, result, imageUri, savedScanId, contribute = true, continueGroupId = continueGroupId.takeIf { it != -1 })
                         isContributed = true
                         com.dermalens.app.worker.ContributionUploadScheduler.triggerImmediateUpload(context)
                         showContributionDialog = true
@@ -512,7 +544,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (!result.isLowConfidence) {
+                        if (!result.isLowConfidence || result.isNoCondition) {
                             Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(result.color))
                             Spacer(modifier = Modifier.width(10.dp))
                         }
@@ -544,7 +576,10 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                     val fresh = !isHistoryView
                     InfoChip(if (fresh) "Just now" else friendlyScanDate(date), Color.White, settings.textSecondary, icon = Icons.Outlined.Schedule)
                 }
-                if (result.isLowConfidence) {
+                if (result.isNoCondition) {
+                    InfoChip("Looks clear", Color(0xFFDCFCE7), DermaSuccessText)
+                    if (isSaved) InfoChip("Saved to Progress", Color(0xFFDCFCE7), DermaSuccessText)
+                } else if (result.isLowConfidence) {
                     InfoChip("No clear match", Color(0xFFF3F4F6), Color(0xFF4B5563))
                 } else {
                     val regions = result.boundingBoxes.size
@@ -558,7 +593,7 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
             Spacer(modifier = Modifier.height(16.dp))
 
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                ResultCard(icon = Icons.Outlined.Info, iconBg = DermaGreenLight, iconTint = DermaGreen, title = "About this condition") {
+                ResultCard(icon = Icons.Outlined.Info, iconBg = DermaGreenLight, iconTint = DermaGreen, title = if (result.isLowConfidence) "About this result" else "About this condition") {
                     Text(result.description, fontSize = settings.textMd.sp, color = Color(0xFF374151), lineHeight = (settings.textMd * 1.55f).sp)
                 }
 
@@ -591,16 +626,20 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                     icon = Icons.Default.AutoAwesome,
                     iconBg = Color(0xFFFEF3C7),
                     iconTint = Color(0xFFD97706),
-                    title = if (result.isLowConfidence) "What You Can Try" else "Common Symptoms"
+                    title = when {
+                        result.isNoCondition -> "Good to Know"
+                        result.isLowConfidence -> "What You Can Try"
+                        else -> "Common Symptoms"
+                    }
                 ) {
                     result.symptoms.forEach { symptom ->
                         Row(
                             modifier = Modifier.padding(vertical = 4.dp).semantics { contentDescription = "Symptom: $symptom" },
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.Top
                         ) {
-                            Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(result.color))
+                            Box(modifier = Modifier.padding(top = 7.dp).size(7.dp).clip(CircleShape).background(result.color))
                             Spacer(modifier = Modifier.width(10.dp))
-                            Text(symptom, fontSize = settings.textMd.sp, color = Color(0xFF374151))
+                            Text(symptom, fontSize = settings.textMd.sp, color = Color(0xFF374151), lineHeight = (settings.textMd * 1.45f).sp)
                         }
                     }
                 }
@@ -670,7 +709,12 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                 // entry that reopened as "Analysis Unavailable" (the history view only knows the
                 // six real conditions), counted as a "condition" in Profile, and -- with research
                 // contribution on -- offered to upload a non-skin or failed photo to the dataset.
-                if (!result.isLowConfidence) {
+                // No Condition Found can be saved only as the next scan of an existing timeline
+                // ("Scan Again" on a Progress card), where it shows that spot clearing up. A
+                // fresh clear scan has nothing to track, so it isn't offered there.
+                val canSave = !result.isLowConfidence ||
+                    (result.isNoCondition && (continueGroupId != -1 || isHistoryView))
+                if (canSave) {
                     PillButton(
                         // Was "Save to History" -- renamed to match the one consistent name the rest
                         // of the app now uses for this same feature (bottom nav tab, Home's card,
@@ -695,9 +739,10 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                                         // contribute is asked right after, as its own explicit
                                         // yes/no prompt, so consent is real rather than a side
                                         // effect of tapping this button.
-                                        savedScanId = saveScan(context, result, imageUri, savedScanId, contribute = false, continueTrackGroupId = continueTrackGroupId.takeIf { it != -1 })
+                                        savedScanId = saveScan(context, result, imageUri, savedScanId, contribute = false, continueGroupId = continueGroupId.takeIf { it != -1 })
                                         isSaved = true
-                                        if (contributionFeatureEnabled && !isContributed) {
+                                        // Research uploads only take the 6 conditions' photos.
+                                        if (contributionFeatureEnabled && !isContributed && !result.isNoCondition) {
                                             showContributePrompt = true
                                         }
                                     } catch (e: Exception) {

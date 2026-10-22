@@ -19,23 +19,23 @@ sealed class Screen(val route: String) {
     object Register : Screen("register")
     object VerifyEmail : Screen("verify_email")
     object Home : Screen("home")
-    object Scan : Screen("scan?continueTrackGroupId={continueTrackGroupId}") {
-        // continueTrackGroupId defaults to -1 ("start a new, unrelated trend even if the result
+    object Scan : Screen("scan?continueGroupId={continueGroupId}") {
+        // continueGroupId defaults to -1 ("start a new, unrelated trend even if the result
         // ends up sharing a condition with an existing one") so every existing call site (Home,
         // the bottom nav tab, Progress Tracker's own "Start New Scan") keeps working unchanged.
         // Only Progress Tracker's per-condition "Scan Again" passes a real value, to explicitly
         // continue that specific trend regardless of what this new scan classifies as.
-        fun createRoute(continueTrackGroupId: Int = -1) = "scan?continueTrackGroupId=$continueTrackGroupId"
+        fun createRoute(continueGroupId: Int = -1) = "scan?continueGroupId=$continueGroupId"
     }
-    object ScanResult : Screen("scan_result?imageUri={imageUri}&scanId={scanId}&continueTrackGroupId={continueTrackGroupId}") {
+    object ScanResult : Screen("scan_result?imageUri={imageUri}&scanId={scanId}&continueGroupId={continueGroupId}") {
         // scanId defaults to -1 ("not viewing history") so the two existing call sites (a fresh
         // scan from CameraScreen, which only ever passes imageUri) don't need to change at all.
         // Passing a real scanId (from Progress Tracker) tells ScanResultScreen to load that
-        // saved record instead of running a brand new inference on the image. continueTrackGroupId
+        // saved record instead of running a brand new inference on the image. continueGroupId
         // just carries Scan's own value forward so it's still known at the point where saving
         // actually happens -- see saveScan().
-        fun createRoute(imageUri: String?, scanId: Int = -1, continueTrackGroupId: Int = -1) =
-            "scan_result?imageUri=${imageUri?.let { android.net.Uri.encode(it) } ?: ""}&scanId=$scanId&continueTrackGroupId=$continueTrackGroupId"
+        fun createRoute(imageUri: String?, scanId: Int = -1, continueGroupId: Int = -1) =
+            "scan_result?imageUri=${imageUri?.let { android.net.Uri.encode(it) } ?: ""}&scanId=$scanId&continueGroupId=$continueGroupId"
     }
     object ProgressTracker : Screen("progress_tracker")
     object FamilyTree : Screen("family_tree/{condition}") {
@@ -82,7 +82,7 @@ fun DermaLensNavGraph(
         composable(
             Screen.Scan.route,
             arguments = listOf(
-                navArgument("continueTrackGroupId") {
+                navArgument("continueGroupId") {
                     type = NavType.IntType
                     defaultValue = -1
                 }
@@ -90,7 +90,7 @@ fun DermaLensNavGraph(
         ) { backStackEntry ->
             ScanScreen(
                 navController = navController,
-                continueTrackGroupId = backStackEntry.arguments?.getInt("continueTrackGroupId") ?: -1
+                continueGroupId = backStackEntry.arguments?.getInt("continueGroupId") ?: -1
             )
         }
         composable(
@@ -105,7 +105,7 @@ fun DermaLensNavGraph(
                     type = NavType.IntType
                     defaultValue = -1
                 },
-                navArgument("continueTrackGroupId") {
+                navArgument("continueGroupId") {
                     type = NavType.IntType
                     defaultValue = -1
                 }
@@ -115,7 +115,7 @@ fun DermaLensNavGraph(
                 navController = navController,
                 imageUri = backStackEntry.arguments?.getString("imageUri"),
                 scanId = backStackEntry.arguments?.getInt("scanId") ?: -1,
-                continueTrackGroupId = backStackEntry.arguments?.getInt("continueTrackGroupId") ?: -1
+                continueGroupId = backStackEntry.arguments?.getInt("continueGroupId") ?: -1
             )
         }
         composable(Screen.ProgressTracker.route) {

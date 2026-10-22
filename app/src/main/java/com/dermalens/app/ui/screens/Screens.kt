@@ -82,9 +82,15 @@ fun isStrongPassword(password: String): Boolean =
  * password-change flow. */
 fun firebaseAuthErrorMessage(e: Exception): String = when (e) {
     is FirebaseAuthWeakPasswordException -> "Password is too weak. Use at least 6 characters."
-    is FirebaseAuthInvalidCredentialsException -> "Incorrect email or password. Please try again."
+    // These two share one message on purpose. Firebase distinguishes "no account for this email"
+    // (InvalidUser) from "that password was wrong" (InvalidCredentials), and showing the
+    // difference lets someone probe an email list to learn which addresses are registered --
+    // they just read which of the two errors comes back. One wording for both means a failed
+    // sign-in says nothing about whether the account exists. The cost is that a genuinely
+    // disabled account also reads as "invalid credentials", which is the accepted trade.
+    is FirebaseAuthInvalidCredentialsException,
+    is FirebaseAuthInvalidUserException -> "Invalid credentials. Please try again."
     is FirebaseAuthUserCollisionException -> "An account with this email already exists."
-    is FirebaseAuthInvalidUserException -> "No account found with this email, or it has been disabled."
     else -> e.localizedMessage ?: "Something went wrong. Please try again."
 }
 
@@ -128,8 +134,11 @@ internal suspend fun getGoogleAuthCredential(context: android.content.Context): 
  */
 private suspend fun signInWithGoogle(context: android.content.Context): FirebaseUser {
     val firebaseCredential = getGoogleAuthCredential(context)
-    return FirebaseAuth.getInstance().signInWithCredential(firebaseCredential).awaitTask().user
-        ?: throw IllegalStateException("Google sign-in succeeded but returned no user.")
+    val result = FirebaseAuth.getInstance().signInWithCredential(firebaseCredential).awaitTask()
+    // A brand-new account gets the Contribute to Research prompt on Home, the same one an email
+    // sign-up gets after verifying. Returning Google users don't see it again.
+    if (result.additionalUserInfo?.isNewUser == true) NewUserSignal.pendingContributePrompt = true
+    return result.user ?: throw IllegalStateException("Google sign-in succeeded but returned no user.")
 }
 
 /** True when this account has no Firebase email/password credential -- i.e. it signed up via
@@ -139,6 +148,30 @@ private suspend fun signInWithGoogle(context: android.content.Context): Firebase
  * docs/PRELAUNCH_AUDIT_2026-09-21.md #1. */
 internal fun isGoogleOnlyAccount(user: FirebaseUser): Boolean =
     user.providerData.none { it.providerId == com.google.firebase.auth.EmailAuthProvider.PROVIDER_ID }
+
+/**
+ * The name the user chose for themselves (saved on their Firebase account by Register or Edit
+ * Profile, so it follows them to a new phone), or null if they haven't set one. Google sign-in
+ * fills the account's displayName with the Google profile name, which doesn't count: a user starts
+ * with no name and picks their own. (Picking exactly their Google name reads as "not set" here.)
+ */
+internal fun chosenDisplayName(user: FirebaseUser): String? {
+    val name = user.displayName?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val googleName = user.providerData.firstOrNull { it.providerId == GoogleAuthProvider.PROVIDER_ID }?.displayName?.trim()
+    return name.takeIf { it != googleName }
+}
+
+/** Saves the user's chosen name on their Firebase account. Best effort: offline, it only stays local. */
+internal fun saveDisplayName(user: FirebaseUser, name: String) {
+    user.updateProfile(com.google.firebase.auth.UserProfileChangeRequest.Builder().setDisplayName(name).build())
+}
+
+/** Fills in a local profile's missing name from the account, e.g. one set on another phone. */
+private suspend fun fillMissingName(db: DermaDatabase, local: User, firebaseUser: FirebaseUser) {
+    if (local.fullName != null) return
+    val chosen = chosenDisplayName(firebaseUser) ?: return
+    db.userDao().updateProfile(local.userId, chosen, local.email)
+}
 
 /**
  * Same self-healing profile pattern email/password login already uses (see LoginScreen below):
@@ -153,12 +186,13 @@ private suspend fun syncLocalProfileForGoogleUser(context: android.content.Conte
     if (existing == null) {
         db.userDao().insertUser(
             User(
-                fullName = firebaseUser.displayName ?: firebaseUser.email?.substringBefore("@") ?: "User",
+                fullName = chosenDisplayName(firebaseUser),
                 email = firebaseUser.email ?: "",
-                passwordHash = "",
                 firebaseUid = firebaseUser.uid
             )
         )
+    } else {
+        fillMissingName(db, existing, firebaseUser)
     }
     prefs.edit().apply {
         putBoolean(DermaPrefs.KEY_IS_LOGGED_IN, true)
@@ -168,7 +202,7 @@ private suspend fun syncLocalProfileForGoogleUser(context: android.content.Conte
 }
 
 @Composable
-private fun dermaFieldColors(highContrast: Boolean) = OutlinedTextFieldDefaults.colors(
+internal fun dermaFieldColors(highContrast: Boolean) = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = Color.White,
     unfocusedContainerColor = Color.White,
     errorContainerColor = Color.White,
@@ -327,7 +361,11 @@ fun LoginScreen(navController: NavController) {
                         loginError = ""
                         FirebaseAuth.getInstance().sendPasswordResetEmail(email.trim())
                             .addOnSuccessListener { infoMessage = "Password reset email sent to ${email.trim()}." }
-                            .addOnFailureListener { e -> loginError = firebaseAuthErrorMessage(e) }
+                            // Same banner whether or not the address is registered. Reporting
+                            // "no account found" here would hand back exactly the enumeration
+                            // answer the shared sign-in wording above is written to withhold --
+                            // a reset form is the easiest place in any app to probe for it.
+                            .addOnFailureListener { infoMessage = "Password reset email sent to ${email.trim()}." }
                     }
                 }) {
                     Text("Forgot password?", fontSize = settings.textSm.sp, color = DermaGreen, fontWeight = FontWeight.SemiBold)
@@ -351,12 +389,13 @@ fun LoginScreen(navController: NavController) {
                                         // profile row to read.
                                         db.userDao().insertUser(
                                             User(
-                                                fullName = firebaseUser.email?.substringBefore("@") ?: "User",
+                                                fullName = chosenDisplayName(firebaseUser),
                                                 email = firebaseUser.email ?: email.trim().lowercase(),
-                                                passwordHash = "",
                                                 firebaseUid = firebaseUser.uid
                                             )
                                         )
+                                    } else if (user != null && firebaseUser != null) {
+                                        fillMissingName(db, user, firebaseUser)
                                     }
                                     isLoading = false
                                     if (firebaseUser != null && !firebaseUser.isEmailVerified) {
@@ -535,13 +574,13 @@ fun RegisterScreen(navController: NavController) {
                             .addOnSuccessListener { result ->
                                 val firebaseUser = result.user
                                 firebaseUser?.sendEmailVerification()
+                                firebaseUser?.let { saveDisplayName(it, name.trim()) }
                                 scope.launch {
                                     try {
                                         db.userDao().insertUser(
                                             User(
                                                 fullName = name.trim(),
                                                 email = firebaseUser?.email ?: email.trim().lowercase(),
-                                                passwordHash = "",
                                                 firebaseUid = firebaseUser?.uid
                                             )
                                         )
@@ -647,7 +686,7 @@ fun RegisterScreen(navController: NavController) {
             title = { Text("Privacy Policy", fontWeight = FontWeight.Bold, fontSize = 18.sp) },
             text = {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    PrivacySection("Data We Collect", "We collect your name, email address, and skin scan images you choose to submit. Scan results including condition, severity, and confidence scores are stored locally on your device.")
+                    PrivacySection("Data We Collect", "We collect your name, email address, and skin scan images you choose to submit. Scan results including condition and confidence scores are stored locally on your device.")
                     PrivacySection("How We Use Your Data", "Your data is used solely to provide personalized skin health tracking within the app. If you enable 'Contribute to Research', anonymized scan data may be used to improve our detection model.")
                     PrivacySection("Data Storage", "Scan history, results, and app preferences are stored locally on your device. Your email and password are managed by Firebase Authentication (Google's infrastructure) for account verification and sign-in -- your password is never visible to us in plain text. We do not sell, rent, or share your personal information with third parties.")
                     PrivacySection("Research Contributions", "Contribution is entirely opt-in. You may toggle this off at any time in Profile > Contribute to Research. If enabled, contributed images are uploaded to secure cloud storage over Wi-Fi for use in improving the detection model -- the upload is anonymous and contains no name, email, or account information, only the image and its detected condition.")

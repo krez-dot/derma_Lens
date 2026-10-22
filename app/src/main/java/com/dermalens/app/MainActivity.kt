@@ -36,6 +36,24 @@ class MainActivity : ComponentActivity() {
         getSharedPreferences(DermaPrefs.PREFS_NAME, MODE_PRIVATE)
             .getBoolean(DermaPrefs.KEY_NOTIFICATIONS_ENABLED, true)
 
+    /**
+     * Installs from before the reminder time was user-configurable already have a job armed for
+     * whatever o'clock the toggle happened to be flipped, and the KEEP policy below would leave
+     * it there forever. Seed the default once and force a re-arm so those users land on a sane
+     * morning reminder; after this the key exists and the normal KEEP path takes over.
+     */
+    private fun migrateReminderTimeIfNeeded() {
+        val prefs = getSharedPreferences(DermaPrefs.PREFS_NAME, MODE_PRIVATE)
+        if (prefs.contains(DermaPrefs.KEY_REMINDER_HOUR)) return
+        prefs.edit()
+            .putInt(DermaPrefs.KEY_REMINDER_HOUR, NotificationScheduler.DEFAULT_HOUR)
+            .putInt(DermaPrefs.KEY_REMINDER_MINUTE, NotificationScheduler.DEFAULT_MINUTE)
+            .apply()
+        if (remindersEnabled()) {
+            NotificationScheduler.scheduleDailyReminder(this, replaceExisting = true)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Explicit light style, not the no-arg default -- the no-arg version follows the
@@ -53,6 +71,8 @@ class MainActivity : ComponentActivity() {
         // the time the user reaches Clinic Locator -- BitmapDescriptorFactory (used for custom
         // map markers) throws a NullPointerException if called before this has run at least once.
         MapsInitializer.initialize(this)
+
+        migrateReminderTimeIfNeeded()
 
         // Request notification permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

@@ -17,6 +17,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -53,13 +54,32 @@ fun SplashScreen(navController: NavController) {
     val hasSeenOnboarding = remember { prefs.getBoolean(DermaPrefs.KEY_HAS_SEEN_ONBOARDING, false) }
     val isLoggedIn = remember { prefs.getBoolean(DermaPrefs.KEY_IS_LOGGED_IN, false) }
 
-    val scale = remember { Animatable(0f) }
-    val alpha = remember { Animatable(0f) }
+    // Logo reveal: a purple dot appears and grows into the rounded owl logo, then the name slides
+    // up. With the phone's animations turned off it all just shows, still.
+    val animate = remember {
+        android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
+    }
+    val dotScale = remember { Animatable(if (animate) 0f else 1f) }
+    val grow = remember { Animatable(if (animate) 0f else 1f) }
+    val titleAlpha = remember { Animatable(if (animate) 0f else 1f) }
+    val titleRise = remember { Animatable(if (animate) 14f else 0f) }
+    val taglineAlpha = remember { Animatable(if (animate) 0f else 1f) }
 
     LaunchedEffect(Unit) {
-        launch { scale.animateTo(1f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) }
-        launch { alpha.animateTo(1f, animationSpec = tween(800)) }
-        delay(2000)
+        if (animate) {
+            delay(150)
+            dotScale.animateTo(1f, tween(260, easing = FastOutSlowInEasing))
+            delay(120)
+            launch { grow.animateTo(1f, tween(700, easing = FastOutSlowInEasing)) }
+            delay(480)
+            launch { titleAlpha.animateTo(1f, tween(450)) }
+            launch { titleRise.animateTo(0f, tween(500, easing = LinearOutSlowInEasing)) }
+            delay(220)
+            launch { taglineAlpha.animateTo(1f, tween(450)) }
+            delay(1400)
+        } else {
+            delay(1200)
+        }
         when {
             isLoggedIn -> navController.navigate(Screen.Home.route) { popUpTo(Screen.Splash.route) { inclusive = true } }
             hasSeenOnboarding -> navController.navigate(Screen.Login.route) { popUpTo(Screen.Splash.route) { inclusive = true } }
@@ -67,23 +87,90 @@ fun SplashScreen(navController: NavController) {
         }
     }
 
+    val loading = if (animate) {
+        rememberInfiniteTransition(label = "splashLoading")
+            .animateFloat(0f, 1f, infiniteRepeatable(tween(1300, easing = FastOutSlowInEasing), RepeatMode.Restart), label = "loading").value
+    } else 0.35f
+
     Box(
-        modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(colors = listOf(DermaGreen, DermaGreenDark))),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(Color.White, Color(0xFFF8F6FF), Color(0xFFF1EDFE)))),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Image(
-                painter = painterResource(id = R.drawable.dermalens_logo),
-                contentDescription = "DermaLens logo",
-                modifier = Modifier.size(120.dp).clip(RoundedCornerShape(28.dp))
+            // Fixed-size slot so the text below doesn't move while the logo grows.
+            Box(modifier = Modifier.size(120.dp), contentAlignment = Alignment.Center) {
+                val g = grow.value
+                val side = 28.dp + (120.dp - 28.dp) * g
+                // A circle at the start (half the dot's size), the logo's rounded square at the end.
+                val tile = RoundedCornerShape(14.dp + (30.dp - 14.dp) * g)
+                Box(
+                    modifier = Modifier
+                        .size(side)
+                        .graphicsLayer {
+                            scaleX = dotScale.value
+                            scaleY = dotScale.value
+                        }
+                        .shadow(18.dp * g, tile, ambientColor = Color(0x664C1D95), spotColor = Color(0x664C1D95))
+                        .clip(tile)
+                        // Same violet-to-indigo as the logo's own backdrop, so the hand-off is seamless.
+                        .background(Brush.verticalGradient(listOf(Color(0xFF7C3AED), Color(0xFF3B1A9E))))
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.dermalens_logo),
+                        contentDescription = "DermaLens logo",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { alpha = ((g - 0.45f) / 0.55f).coerceIn(0f, 1f) }
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(18.dp))
+            Text(
+                "DermaLens",
+                fontSize = 34.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-0.5).sp,
+                color = Color(0xFF4C1D95),
+                modifier = Modifier.graphicsLayer {
+                    alpha = titleAlpha.value
+                    translationY = titleRise.value * density
+                }
             )
-            Spacer(modifier = Modifier.height(24.dp))
-            Text("DermaLens", fontSize = 36.sp, fontWeight = FontWeight.Bold, color = Color.White)
-            Text("Skin health in your hands", fontSize = 15.sp, color = Color.White.copy(alpha = 0.8f))
-            Spacer(modifier = Modifier.height(48.dp))
-            CircularProgressIndicator(color = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                "Skin health in your hands",
+                fontSize = 15.sp,
+                color = Color(0xFF6B7280),
+                modifier = Modifier.graphicsLayer { alpha = taglineAlpha.value }
+            )
         }
-        Text("Tarlac State University • Capstone 2026", fontSize = 11.sp, color = Color.White.copy(alpha = 0.5f), modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp))
+
+        Column(
+            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(88.dp)
+                    .height(4.dp)
+                    .graphicsLayer { alpha = taglineAlpha.value }
+                    .clip(CircleShape)
+                    .background(Color(0xFFE4DEFB))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(32.dp)
+                        .fillMaxHeight()
+                        .graphicsLayer { translationX = (-32f + 120f * loading) * density }
+                        .clip(CircleShape)
+                        .background(Brush.horizontalGradient(listOf(Color(0xFFA78BFA), Color(0xFF7C3AED))))
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Tarlac State University • Capstone 2026", fontSize = 11.sp, color = Color(0xFF9CA3AF))
+        }
     }
 }
 

@@ -273,6 +273,11 @@ object DermaPrefs {
     const val KEY_HIGH_CONTRAST = "high_contrast"
     const val KEY_CONTRIBUTE_DATA = "contribute_data"
     const val KEY_NOTIFICATIONS_ENABLED = "notifications_enabled"
+    // Time of day the user picked for the daily scan reminder, as 24h hour + minute. Before this
+    // existed the reminder just fired 24h after the toggle was flipped, so it landed at whatever
+    // o'clock they happened to tap it. Defaults live in NotificationScheduler.
+    const val KEY_REMINDER_HOUR = "reminder_hour"
+    const val KEY_REMINDER_MINUTE = "reminder_minute"
     const val KEY_HIDE_SCAN_CONDITIONS_INFO = "hide_scan_conditions_info"
     // Local mirror of the signed-in account's "Back Up Scan History" choice. The source of truth
     // is users/{uid}.syncEnabled in Firestore (so a second phone learns it at login); this copy
@@ -381,13 +386,32 @@ fun DermaAlertDialog(
     @Suppress("UNUSED_PARAMETER") shape: androidx.compose.ui.graphics.Shape? = null,
     @Suppress("UNUSED_PARAMETER") containerColor: Color? = null,
     titleContentColor: Color = Color(0xFF111827),
-    textContentColor: Color = Color(0xFF374151)
+    textContentColor: Color = Color(0xFF374151),
+    /** Frosted-glass treatment: translucent card over a blurred backdrop. Ignored in high
+     *  contrast mode, where a solid card is the accessible choice. */
+    glass: Boolean = false
 ) {
     val settings = LocalAppSettings.current
+    val glassOn = glass && !settings.highContrast
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismissRequest,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        if (glassOn) {
+            // Modifier.blur() would blur the dialog's own pixels; what we want is the content
+            // *behind* the window frosted, which only the window itself can do (API 31+). Also
+            // lighten the scrim -- a heavy dim defeats the point of a see-through card.
+            val dialogView = androidx.compose.ui.platform.LocalView.current
+            androidx.compose.runtime.SideEffect {
+                (dialogView.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window?.let { w ->
+                    w.setDimAmount(0.18f)
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                        w.addFlags(android.view.WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+                        w.attributes = w.attributes.also { it.blurBehindRadius = 56 }
+                    }
+                }
+            }
+        }
         // Purple accents for any default-coloured TextButton/Button inside.
         androidx.compose.material3.MaterialTheme(
             colorScheme = androidx.compose.material3.MaterialTheme.colorScheme.copy(primary = DermaGreen, onPrimary = Color.White),
@@ -400,7 +424,24 @@ fun DermaAlertDialog(
                     .fillMaxWidth()
                     .widthIn(max = 460.dp)
                     .clip(cardShape)
-                    .background(Color.White)
+                    .then(
+                        if (glassOn) Modifier
+                            .background(
+                                androidx.compose.ui.graphics.Brush.verticalGradient(
+                                    listOf(Color.White.copy(alpha = 0.52f), Color.White.copy(alpha = 0.26f))
+                                )
+                            )
+                            // A brighter edge along the top is what sells glass -- it reads as
+                            // light catching the lip of the panel.
+                            .border(
+                                1.dp,
+                                androidx.compose.ui.graphics.Brush.verticalGradient(
+                                    listOf(Color.White.copy(alpha = 0.95f), Color.White.copy(alpha = 0.25f))
+                                ),
+                                cardShape
+                            )
+                        else Modifier.background(Color.White)
+                    )
                     .then(if (settings.highContrast) Modifier.border(1.dp, HcBorder, cardShape) else Modifier)
                     .padding(start = 24.dp, end = 24.dp, top = 28.dp, bottom = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
