@@ -93,7 +93,6 @@ private fun skinFraction(bitmap: Bitmap): Float {
 fun noConditionResult(confidencePercent: Float) = DetectionResult(
     condition = NO_CONDITION_FOUND,
     confidence = confidencePercent,
-    severity = "None",
     description = "DermaLens didn't find signs of acne, eczema, melasma, tinea, warts or scabies in this photo. " +
         "Your skin looks clear of the 6 conditions DermaLens checks for.",
     symptoms = listOf(
@@ -110,7 +109,6 @@ fun noConditionResult(confidencePercent: Float) = DetectionResult(
 private fun lowConfidenceResult(confidencePercent: Float) = DetectionResult(
     condition = "No Clear Condition Detected",
     confidence = confidencePercent,
-    severity = "Unclear",
     description = "The scan didn't clearly match any condition this app currently recognizes. This can happen if the photo isn't of skin, is blurry or poorly lit, or doesn't clearly show an affected area.",
     symptoms = listOf(
         "Retake the photo in good, even lighting",
@@ -133,7 +131,6 @@ private fun lowConfidenceResult(confidencePercent: Float) = DetectionResult(
 private fun insufficientDetailResult() = DetectionResult(
     condition = "Image Too Unclear to Analyze",
     confidence = 0f,
-    severity = "Unclear",
     description = "This photo doesn't have enough visible detail to analyze reliably -- it may be too dark, out of focus, or the lens may have been obstructed.",
     symptoms = listOf(
         "Retake in bright, even lighting",
@@ -278,7 +275,6 @@ fun runYoloInference(context: Context, imageUri: String): DetectionResult? {
 fun analysisFailedResult() = DetectionResult(
     condition = "Analysis Unavailable",
     confidence = 0f,
-    severity = "Unknown",
     description = "The scan couldn't be analyzed on this device. This is a problem with the app rather than with your photo, so retaking it probably won't help.",
     symptoms = listOf(
         "Try closing and reopening the app",

@@ -9,8 +9,11 @@ rules_version = '2';
 // 2. Opt-in scan history backup (data/sync/ScanHistorySync.kt) -- health records, so readable
 //    and writable ONLY by the account that owns them. Never photos.
 //    users/{uid}                    { syncEnabled, updatedAt }
-//    users/{uid}/scans/{scanDate}   { condition, confidence, severity, notes, scanDate,
+//    users/{uid}/scans/{scanDate}   { condition, confidence, notes, scanDate,
 //                                     groupKey, deleted, updatedAt }   (tombstone: deleted=true)
+//    (severity: app 1.2.0 stopped sending it; still accepted, optional, from 1.1.0 installs)
+//    users/{uid}/clinicVotes/{placeId} { votedAt }   -- which clinics this account voted on,
+//                                                      so Delete Account can withdraw them
 //
 // The counts are client-written (no Cloud Functions, to stay on the free Spark plan), so the
 // rules check that every count change exactly matches the caller's own vote change in the same
@@ -106,6 +109,15 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
+      // The account's list of clinics it has voted on, so Delete Account can find and withdraw
+      // every vote (each vote lives under its clinic). Holds only a timestamp.
+      match /clinicVotes/{placeId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isVerifiedOwner(uid)
+          && request.resource.data.keys().hasOnly(['votedAt'])
+          && request.resource.data.votedAt == request.time;
+      }
+
       allow read, delete: if isOwner(uid);
       allow create, update: if isVerifiedOwner(uid)
         && request.resource.data.keys().hasOnly(['syncEnabled', 'updatedAt'])
@@ -127,7 +139,7 @@ service cloud.firestore {
                                                           'scanDate', 'groupKey', 'deleted', 'updatedAt'])
                    && request.resource.data.condition is string
                    && request.resource.data.confidence is number
-                   && request.resource.data.severity is string
+                   && request.resource.data.get('severity', '') is string
                    && request.resource.data.notes is string
                    && request.resource.data.notes.size() <= 2000
                    && request.resource.data.groupKey is int));

@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.dermalens.app.data.db.DermaDatabase
 import com.dermalens.app.data.model.ScanRecord
+import com.dermalens.app.data.model.TrackGroup
 import com.dermalens.app.ui.screens.DermaPrefs
 import com.google.android.gms.tasks.Task
 import com.google.firebase.auth.FirebaseAuth
@@ -21,7 +22,7 @@ import kotlin.coroutines.resumeWithException
 
 /**
  * Opt-in "Back Up Scan History": copies the signed-in account's scan *records* (condition,
- * confidence, severity, notes, date, timeline grouping) to Firestore so they reappear when the
+ * confidence, notes, date, timeline grouping) to Firestore so they reappear when the
  * same account logs in on another phone. Photos are never uploaded -- they stay on the phone
  * that took them (cloud file storage would need Firebase's paid Blaze plan, and keeping skin
  * photos off servers is the stronger privacy default anyway).
@@ -31,12 +32,12 @@ import kotlin.coroutines.resumeWithException
  * connection returns, so saving a scan never waits on the network.
  *
  * Layout:  users/{uid}                 { syncEnabled, updatedAt }
- *          users/{uid}/scans/{scanDate} { condition, confidence, severity, notes, scanDate,
- *                                         groupKey, deleted, updatedAt }
+ *          users/{uid}/scans/{scanDate} { condition, confidence, notes, scanDate, groupKey,
+ *                                         deleted, updatedAt }
  *
  * Local Room ids differ per phone, so a scan is identified across devices by its scanDate
  * (millisecond timestamp, set once at creation). Progress timelines are carried the same way:
- * groupKey is the scanDate of the timeline's first scan. Deleting a scan writes a tombstone
+ * groupKey is the scanDate of the timeline's earliest scan. Deleting a scan writes a tombstone
  * (deleted=true, health fields dropped) instead of removing the document, so another phone that
  * still has its local copy deletes it on next sync rather than re-uploading it.
  */
@@ -77,17 +78,13 @@ object ScanHistorySync {
         return DermaDatabase.getDatabase(context).userDao().getUserByEmail(email)?.userId
     }
 
-    /** scanDate of the first scan in this scan's Progress timeline (its own, if it starts one). */
-    private suspend fun groupKeyOf(context: Context, scan: ScanRecord): Long {
-        val rootId = scan.trackGroupId ?: return scan.scanDate
-        if (rootId == scan.id) return scan.scanDate
-        return DermaDatabase.getDatabase(context).scanRecordDao().getScanById(rootId)?.scanDate ?: scan.scanDate
-    }
+    /** scanDate of the earliest scan in this scan's Progress timeline (its own, if it starts one). */
+    private suspend fun groupKeyOf(context: Context, scan: ScanRecord): Long =
+        DermaDatabase.getDatabase(context).scanRecordDao().getGroupStartDate(scan.groupId) ?: scan.scanDate
 
     private fun recordFields(scan: ScanRecord, groupKey: Long): Map<String, Any> = mapOf(
         "condition" to scan.condition,
         "confidence" to scan.confidence.toDouble(),
-        "severity" to scan.severity,
         "notes" to scan.notes,
         "scanDate" to scan.scanDate,
         "groupKey" to groupKey,
@@ -218,15 +215,16 @@ object ScanHistorySync {
                 val date = doc.getLong("scanDate") ?: return@forEach
                 local.remove(date)?.let { scan ->
                     if (scan.imagePath.isNotEmpty()) java.io.File(scan.imagePath).delete()
-                    dao.deleteScan(scan.id)
+                    dao.deleteScan(scan.scanId)
                 }
             }
 
-            // timeline roots already on this phone: groupKey (root's scanDate) -> local root id
-            val rootIdByGroupKey = mutableMapOf<Long, Int>()
-            local.values.forEach { scan -> if (scan.trackGroupId == scan.id) rootIdByGroupKey[scan.scanDate] = scan.id }
+            // timelines already on this phone: groupKey (the group's earliest scanDate) -> local groupId
+            val groupIdByKey = local.values.groupBy { it.groupId }
+                .entries.associate { (groupId, scans) -> scans.minOf { it.scanDate } to groupId }
+                .toMutableMap()
 
-            // 2. restore + note updates, oldest first so each timeline's root exists before its members
+            // 2. restore + note updates
             var restored = 0
             val live = cloud.filter { it.getBoolean("deleted") != true }.sortedBy { it.getLong("scanDate") ?: 0L }
             for (doc in live) {
@@ -234,29 +232,25 @@ object ScanHistorySync {
                 val notes = doc.getString("notes") ?: ""
                 val existing = local[date]
                 if (existing != null) {
-                    if (existing.notes != notes) dao.updateNotes(existing.id, notes)
+                    if (existing.notes != notes) dao.updateNotes(existing.scanId, notes)
                     continue
                 }
+                val condition = doc.getString("condition") ?: continue
+                // Keyed by groupKey (not date), so a timeline whose first scan was deleted still
+                // comes back as one timeline.
                 val groupKey = doc.getLong("groupKey") ?: date
-                val rootId = if (groupKey == date) null else rootIdByGroupKey[groupKey]
-                val newId = dao.insertScan(
+                val groupId = groupIdByKey[groupKey]
+                    ?: dao.insertGroup(TrackGroup(userId = userId)).toInt().also { groupIdByKey[groupKey] = it }
+                dao.insertScan(
                     ScanRecord(
-                        userId = userId,
-                        condition = doc.getString("condition") ?: continue,
+                        groupId = groupId,
+                        condition = condition,
                         confidence = (doc.getDouble("confidence") ?: 0.0).toFloat(),
-                        severity = doc.getString("severity") ?: "",
                         notes = notes,
                         scanDate = date,
                         imagePath = "", // photos are not backed up
-                        trackGroupId = rootId,
                     )
-                ).toInt()
-                if (rootId == null) {
-                    // Starts its timeline -- or its original first scan was deleted, in which case
-                    // keying by groupKey (not date) keeps the rest of that timeline together.
-                    dao.setTrackGroupId(newId, newId)
-                    rootIdByGroupKey[groupKey] = newId
-                }
+                )
                 restored++
             }
 

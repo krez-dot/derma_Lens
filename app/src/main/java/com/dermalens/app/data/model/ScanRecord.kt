@@ -1,37 +1,34 @@
 package com.dermalens.app.data.model
 
-import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "scan_records")
+@Entity(
+    tableName = "scan_records",
+    foreignKeys = [ForeignKey(
+        entity = TrackGroup::class,
+        parentColumns = ["groupId"],
+        childColumns = ["groupId"],
+        onDelete = ForeignKey.CASCADE
+    )],
+    indices = [Index("groupId")]
+)
 data class ScanRecord(
     @PrimaryKey(autoGenerate = true)
-    val id: Int = 0,
-    val userId: Int,
+    val scanId: Int = 0,
+    // The tracked spot this scan belongs to (see TrackGroup). The owning user is reached through
+    // the group rather than stored here too, so the two can never disagree.
+    val groupId: Int,
     val condition: String,
     val confidence: Float,
-    val severity: String,
     val notes: String = "",
     val scanDate: Long = System.currentTimeMillis(),
     val imagePath: String = "",
     val contributedForTraining: Boolean = false,
-    // True once ContributionUploadWorker has successfully uploaded this scan's image to Firebase
-    // Storage -- separate from contributedForTraining (which just means "user consented and the
+    // True once ContributionUploadWorker has successfully uploaded this scan's image to Google
+    // Drive (via the Apps Script endpoint) -- separate from contributedForTraining (which just means "user consented and the
     // image was saved locally, pending upload") so the worker knows what's left to do.
-    val uploadedForTraining: Boolean = false,
-    // Groups scans that are genuinely the same tracked spot over time, so Progress Tracker's
-    // trend lines don't conflate unrelated occurrences that just happen to share a condition
-    // label (e.g. a wart on one finger vs. an unrelated new wart on a toe). Self-referential: the
-    // first scan of a new group gets its own id as this value (set right after insert, once the
-    // real id is known); "Scan Again" on a specific trend card copies that same value forward so
-    // the new scan explicitly continues it, while "Start New Scan" leaves this null so a fresh
-    // group gets created even if the result happens to classify as the same condition.
-    val trackGroupId: Int? = null,
-    // The detection boxes drawn on the result, so a saved scan reopens with them (FR16). Stored
-    // as "left,top,right,bottom;..." fractions of the photo (see encodeBoxes/decodeBoxes in
-    // ScanResultScreen.kt). Empty for scans saved before v8, restored from the cloud backup
-    // (which never carries photos, so there'd be nothing to draw on), or with no boxes.
-    @ColumnInfo(defaultValue = "")
-    val boundingBoxes: String = ""
+    val uploadedForTraining: Boolean = false
 )

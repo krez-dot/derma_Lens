@@ -53,25 +53,25 @@ import kotlinx.coroutines.withContext
 fun countDaysTracked(scans: List<com.dermalens.app.data.model.ScanRecord>): Int =
     if (scans.isEmpty()) 0 else ((System.currentTimeMillis() - scans.minOf { it.scanDate }) / (1000L * 60L * 60L * 24L)).toInt() + 1
 
-data class ScanEntry(val id: Int, val date: String, val confidence: Float, val notes: String, val imagePath: String = "", val rawDate: Long = 0L, val isClear: Boolean = false)
-// trackGroupId identifies which specific occurrence/spot this card represents -- passed back to
+data class ScanEntry(val scanId: Int, val date: String, val confidence: Float, val notes: String, val imagePath: String = "", val rawDate: Long = 0L, val isClear: Boolean = false)
+// groupId identifies which specific occurrence/spot this card represents -- passed back to
 // Scan when "Scan Again" is tapped so the resulting new scan explicitly continues *this* card's
-// trend instead of just matching by condition name. See ScanRecord.trackGroupId.
-data class ConditionTrack(val condition: String, val color: Color, val emoji: String, val scans: List<ScanEntry>, val trackGroupId: Int, val latestClear: Boolean = false)
+// trend instead of just matching by condition name. See TrackGroup.
+data class ConditionTrack(val condition: String, val color: Color, val emoji: String, val scans: List<ScanEntry>, val groupId: Int, val latestClear: Boolean = false)
 
 val mockProgressData = listOf(
     ConditionTrack("Papular Acne", Color(0xFFE53935), "🔴", listOf(
         ScanEntry(0, "May 1, 2026", 94.3f, "Initial scan — widespread breakout"),
         ScanEntry(0, "May 5, 2026", 89.2f, "Slight improvement after treatment"),
         ScanEntry(0, "May 10, 2026", 91.5f, "Significant improvement noted"),
-    ), trackGroupId = 0),
+    ), groupId = 0),
     ConditionTrack("Eczema", Color(0xFFFF9800), "🟠", listOf(
         ScanEntry(0, "Apr 20, 2026", 87.6f, "Flare-up detected on forearm"),
         ScanEntry(0, "Apr 28, 2026", 85.1f, "Moisturizer routine helping"),
-    ), trackGroupId = 0),
+    ), groupId = 0),
     ConditionTrack("Melasma", Color(0xFF795548), "🟤", listOf(
         ScanEntry(0, "May 3, 2026", 91.2f, "Brown patches on cheeks detected"),
-    ), trackGroupId = 0)
+    ), groupId = 0)
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -100,12 +100,10 @@ fun ProgressTrackerScreen(navController: NavController) {
             conditionCount = scans.map { it.condition }.filter { it != NO_CONDITION_FOUND }.distinct().size
             // Reset to 0 when empty -- otherwise deleting the last scan left the old value up.
             daysTracked = countDaysTracked(scans)
-            // Grouped by trackGroupId, not condition -- two unrelated occurrences that happen to
+            // Grouped by track group, not condition -- two unrelated occurrences that happen to
             // classify the same (a wart on one finger, an unrelated new wart on a toe) get their
-            // own separate cards instead of being conflated into one misleading trend. Falls back
-            // to the scan's own id for any pre-migration row that somehow has a null group (there
-            // shouldn't be any post-migration, since saveScan always assigns one on insert).
-            val grouped = scans.groupBy { it.trackGroupId ?: it.id }
+            // own separate cards instead of being conflated into one misleading trend.
+            val grouped = scans.groupBy { it.groupId }
             conditionTracks = grouped.map { (groupId, scanList) ->
                 val sortedScans = scanList.sortedBy { it.scanDate }
                 // The card shows the *latest* classification for this group, not the first --
@@ -126,7 +124,7 @@ fun ProgressTrackerScreen(navController: NavController) {
                     // bottom "journey" reading of a progress timeline.
                     scans = sortedScans.map { scan ->
                         ScanEntry(
-                            id = scan.id,
+                            scanId = scan.scanId,
                             date = java.text.SimpleDateFormat("MMM dd, yyyy • h:mm a", java.util.Locale.getDefault())
                                 .format(java.util.Date(scan.scanDate)),
                             confidence = scan.confidence,
@@ -136,7 +134,7 @@ fun ProgressTrackerScreen(navController: NavController) {
                             isClear = scan.condition == NO_CONDITION_FOUND
                         )
                     },
-                    trackGroupId = groupId,
+                    groupId = groupId,
                     latestClear = sortedScans.last().condition == NO_CONDITION_FOUND
                 ) to (sortedScans.lastOrNull()?.scanDate ?: 0L)
             }.sortedByDescending { (_, latestRawDate) -> latestRawDate }.map { (track, _) -> track }
@@ -246,7 +244,7 @@ fun ProgressTrackerScreen(navController: NavController) {
                 EntranceAnimation(delayMillis = index.coerceAtMost(6) * 70) {
                     ConditionTrackCard(
                         track = track,
-                        onScanAgain = { navController.navigate(Screen.Scan.createRoute(continueTrackGroupId = track.trackGroupId)) { launchSingleTop = true } },
+                        onScanAgain = { navController.navigate(Screen.Scan.createRoute(continueGroupId = track.groupId)) { launchSingleTop = true } },
                         onDeleteScan = { scanId ->
                             scope.launch {
                                 // The dialog promises the scan is permanently removed, so the
@@ -272,7 +270,7 @@ fun ProgressTrackerScreen(navController: NavController) {
                             }
                         },
                         onOpenScan = { scan ->
-                            navController.navigate(Screen.ScanResult.createRoute(imageUri = scan.imagePath.ifEmpty { null }, scanId = scan.id))
+                            navController.navigate(Screen.ScanResult.createRoute(imageUri = scan.imagePath.ifEmpty { null }, scanId = scan.scanId))
                         }
                     )
                 }
@@ -377,8 +375,8 @@ fun ConditionTrackCard(track: ConditionTrack, onScanAgain: () -> Unit, onDeleteS
                             isLatest = index == 0 && newestFirst.size > 1,
                             isLastRow = index == newestFirst.size - 1,
                             color = track.color,
-                            onDelete = { onDeleteScan(scan.id) },
-                            onEditNote = { newNote -> onEditNote(scan.id, newNote) },
+                            onDelete = { onDeleteScan(scan.scanId) },
+                            onEditNote = { newNote -> onEditNote(scan.scanId, newNote) },
                             onOpenScan = { onOpenScan(scan) }
                         )
                     }
@@ -402,7 +400,7 @@ fun TimelineNode(scan: ScanEntry, isLatest: Boolean, isLastRow: Boolean, color: 
     val settings = LocalAppSettings.current
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showEditNoteDialog by remember { mutableStateOf(false) }
-    var editedNote by remember(scan.id, scan.notes) { mutableStateOf(scan.notes) }
+    var editedNote by remember(scan.scanId, scan.notes) { mutableStateOf(scan.notes) }
 
     if (showDeleteDialog) {
         DermaAlertDialog(

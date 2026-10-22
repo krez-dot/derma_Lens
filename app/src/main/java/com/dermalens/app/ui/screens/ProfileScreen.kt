@@ -68,7 +68,8 @@ fun ProfileScreen(navController: NavController) {
     var isDeletingAccount by remember { mutableStateOf(false) }
 
     val db = remember { DermaDatabase.getDatabase(context) }
-    var userName by remember { mutableStateOf("User") }
+    var userName by remember { mutableStateOf<String?>(null) }
+    var profileLoaded by remember { mutableStateOf(false) }
     var userEmail by remember { mutableStateOf("") }
     var memberSince by remember { mutableStateOf("") }
     var totalScans by remember { mutableStateOf(0) }
@@ -92,6 +93,7 @@ fun ProfileScreen(navController: NavController) {
         val user = db.userDao().getUserByEmail(savedEmail)
         if (user != null) {
             userName = user.fullName
+            profileLoaded = true
             userEmail = user.email
             // The Firebase account's own creation date, the same on every phone; the local profile
             // row's date resets on a new phone or reinstall.
@@ -130,11 +132,23 @@ fun ProfileScreen(navController: NavController) {
                                 .background(Brush.linearGradient(listOf(Color(0xFFA78BFA), DermaGreen))),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(userName.split(" ").filter { it.isNotEmpty() }.take(2).map { it.first().uppercaseChar() }.joinToString("").ifEmpty { "?" }, fontSize = settings.textXxl.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text((userName ?: "").split(" ").filter { it.isNotEmpty() }.take(2).map { it.first().uppercaseChar() }.joinToString("").ifEmpty { "?" }, fontSize = settings.textXxl.sp, fontWeight = FontWeight.Bold, color = Color.White)
                         }
                         Spacer(modifier = Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(userName, fontSize = settings.textXl.sp, fontWeight = FontWeight.Bold, color = settings.textPrimary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            if (userName == null && profileLoaded) {
+                                // No name yet (never guessed from the email or Google profile) --
+                                // ask for one; tapping opens Edit Profile, same as the pencil.
+                                Text(
+                                    "Add your name",
+                                    fontSize = settings.textXl.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = DermaGreen,
+                                    modifier = Modifier.clickable { navController.navigate(Screen.EditProfile.route) }
+                                )
+                            } else {
+                                Text(userName ?: "", fontSize = settings.textXl.sp, fontWeight = FontWeight.Bold, color = settings.textPrimary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            }
                             Text(userEmail, fontSize = settings.textBase.sp, color = settings.textSecondary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
@@ -568,6 +582,9 @@ fun ProfileScreen(navController: NavController) {
                                 // still exists, and this throws (stopping here, account intact) if
                                 // the backup can't be deleted -- so no orphaned health records.
                                 ScanHistorySync.deleteAllCloudData(firebaseUser.uid)
+                                // Same for clinic votes: withdrawn while the account can still
+                                // write, so none stay behind under its id.
+                                kotlinx.coroutines.withTimeout(20_000) { withdrawAllClinicVotes(firebaseUser.uid) }
 
                                 // Firebase first, local data after: delete() is the step that can
                                 // fail (network drop, stale session), and if it ran last a failure
@@ -584,7 +601,7 @@ fun ProfileScreen(navController: NavController) {
                                         if (scan.imagePath.isNotEmpty()) {
                                             try { java.io.File(scan.imagePath).delete() } catch (e: Exception) { }
                                         }
-                                        db.scanRecordDao().deleteScan(scan.id)
+                                        db.scanRecordDao().deleteScan(scan.scanId)
                                     }
                                     db.userDao().deleteUserById(user.userId)
                                 }
@@ -761,9 +778,9 @@ fun ProfileScreen(navController: NavController) {
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text("Effective Date: January 1, 2026", fontSize = settings.textSm.sp, color = DermaSubtle)
-                    PrivacySection("1. Information We Collect", "DermaLens collects the following data to provide its services:\n\n• Profile information you provide (full name, email address)\n• Skin scan results including detected condition, confidence score, and severity level\n• Scan history and timestamps stored locally on your device (and, only if you turn on Back Up Scan History, in the cloud without photos)\n• Device location (GPS) used only to find nearby dermatology clinics")
+                    PrivacySection("1. Information We Collect", "DermaLens collects the following data to provide its services:\n\n• Profile information you provide (full name, email address)\n• Skin scan results including detected condition and confidence score\n• Scan history and timestamps stored locally on your device (and, only if you turn on Back Up Scan History, in the cloud without photos)\n• Device location (GPS) used only to find nearby dermatology clinics")
                     PrivacySection("2. How We Use Your Data", "All data collected by DermaLens is used solely to:\n\n• Display your scan history and progress over time\n• Personalize your in-app experience\n• Help locate nearby dermatology clinics based on your location\n• Send optional daily scan reminder notifications")
-                    PrivacySection("3. Data Storage", "All personal data and scan records are stored locally on your device using a secure Room database, including a saved copy of each scan's photo so you can review your progress over time. Your account's email address and verification status are managed by Google Firebase Authentication.\n\nIf you turn on Back Up Scan History (Profile > Account), your scan records (condition, confidence, severity, date, and notes) are also stored in Google Firebase, accessible only to your account, so they can be restored on another phone. Scan photos are never included in this backup. Turning backup off, or deleting your account, deletes the cloud copy.\n\nScan images leave your device only if you separately opt in to Contribute to Research, and then anonymously.")
+                    PrivacySection("3. Data Storage", "All personal data and scan records are stored locally on your device using a secure Room database, including a saved copy of each scan's photo so you can review your progress over time. Your account's email address and verification status are managed by Google Firebase Authentication.\n\nIf you turn on Back Up Scan History (Profile > Account), your scan records (condition, confidence, date, and notes) are also stored in Google Firebase, accessible only to your account, so they can be restored on another phone. Scan photos are never included in this backup. Turning backup off, or deleting your account, deletes the cloud copy.\n\nScan images leave your device only if you separately opt in to Contribute to Research, and then anonymously.")
                     PrivacySection("4. Camera & Gallery Access", "Camera and gallery access is used exclusively to capture or select skin images for AI analysis. Images are processed on-device and saved locally with your scan history. They are never shared with third parties, and are only uploaded if you opt in to Contribute to Research.")
                     PrivacySection("5. Location Access", "Location is accessed only when you use the Clinic Locator feature to find nearby dermatology clinics. Location data is not stored or logged.")
                     PrivacySection("6. AI Disclaimer", "DermaLens uses an on-device AI model (YOLOv11 TFLite) for skin condition detection. Results are for reference only and do not constitute medical advice. Always consult a dermatologist for diagnosis and treatment.")
@@ -850,7 +867,7 @@ fun EditProfileScreen(navController: NavController) {
         val prefs = context.getSharedPreferences(DermaPrefs.PREFS_NAME, android.content.Context.MODE_PRIVATE)
         val savedEmail = prefs.getString(DermaPrefs.KEY_USER_EMAIL, "") ?: ""
         val user = db.userDao().getUserByEmail(savedEmail)
-        if (user != null) { name = user.fullName; email = user.email; originalName = user.fullName }
+        if (user != null) { name = user.fullName ?: ""; email = user.email; originalName = user.fullName ?: "" }
     }
 
     LaunchedEffect(saveTrigger) {
@@ -888,6 +905,7 @@ fun EditProfileScreen(navController: NavController) {
                 currentPassword = ""; newPassword = ""; confirmPassword = ""
             }
             db.userDao().updateProfile(user.userId, trimmedName, user.email)
+            FirebaseAuth.getInstance().currentUser?.let { saveDisplayName(it, trimmedName) }
             originalName = trimmedName
             isSaved = true
         }

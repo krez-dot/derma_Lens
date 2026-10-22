@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,7 +41,7 @@ import kotlin.math.roundToInt
 // route is the template used to detect "is this tab currently selected" (NavDestination.route
 // always reports the raw {placeholder} template, never the filled-in runtime string) --
 // navigateRoute is the actual, fully-resolved string passed to navigate(). They're the same for
-// every tab except Scan, whose route now carries an optional continueTrackGroupId argument.
+// every tab except Scan, whose route now carries an optional continueGroupId argument.
 sealed class BottomNavItem(val route: String, val icon: ImageVector, val label: String, val navigateRoute: String = route) {
     object Home : BottomNavItem(Screen.Home.route, Icons.Default.Home, "Home")
     object Scan : BottomNavItem(Screen.Scan.route, Icons.Default.CameraAlt, "Scan", navigateRoute = Screen.Scan.createRoute())
@@ -231,12 +232,20 @@ fun HomeScreen(navController: NavController) {
     var showContributePrompt by remember {
         mutableStateOf(NewUserSignal.pendingContributePrompt.also { NewUserSignal.pendingContributePrompt = false })
     }
+    val scope = rememberCoroutineScope()
+    var userEmail by remember { mutableStateOf("") }
+    var showNamePrompt by remember { mutableStateOf(false) }
+    var nameInput by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         val savedEmail = prefs.getString(DermaPrefs.KEY_USER_EMAIL, "") ?: ""
         val user = db.userDao().getUserByEmail(savedEmail)
         userId = user?.userId
+        userEmail = user?.email ?: ""
         firstName = user?.fullName?.trim()?.split(" ")?.firstOrNull() ?: ""
+        // A name is never guessed (e.g. a Google sign-up starts without one), so ask for it --
+        // unless the user already said "Later" since the app was opened.
+        showNamePrompt = user != null && user.fullName.isNullOrBlank() && !namePromptSnoozed
         // Opt-in scan history backup: merge with the cloud copy (restores scans saved on another
         // phone, applies deletions/edits made there). Silently skipped offline or when backup is
         // off; the scan list below updates on its own since it observes Room.
@@ -383,9 +392,83 @@ fun HomeScreen(navController: NavController) {
         }
     }
 
+    if (showNamePrompt) {
+        val trimmed = nameInput.trim()
+        val saveName = {
+            userId?.let { id ->
+                scope.launch {
+                    db.userDao().updateProfile(id, trimmed, userEmail)
+                    com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.let { saveDisplayName(it, trimmed) }
+                    firstName = trimmed.split(" ").first()
+                    showNamePrompt = false
+                }
+            }
+        }
+        DermaAlertDialog(
+            onDismissRequest = { namePromptSnoozed = true; showNamePrompt = false },
+            title = { Text("How should we call you?", fontWeight = FontWeight.Bold, fontSize = settings.textXxl.sp, color = Color(0xFF111827)) },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "Enter your full name, or the name you'd like us to call you.",
+                        fontSize = settings.textMd.sp,
+                        color = Color(0xFF6B7280),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        lineHeight = 20.sp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedTextField(
+                        value = nameInput,
+                        onValueChange = { nameInput = it },
+                        placeholder = { Text("Full name", color = DermaMuted) },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Words,
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                        ),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { if (trimmed.isNotEmpty()) saveName() }),
+                        shape = RoundedCornerShape(50),
+                        colors = dermaFieldColors(settings.highContrast),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        "You can change it anytime in Profile > Edit Profile.",
+                        fontSize = settings.textSm.sp,
+                        color = DermaMuted,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            },
+            icon = {
+                // The DermaLens owl, filling the dialog's round icon tile.
+                Image(
+                    painter = painterResource(id = R.drawable.dermalens_logo),
+                    contentDescription = null,
+                    modifier = Modifier.requiredSize(64.dp).clip(CircleShape)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { saveName() },
+                    enabled = trimmed.isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(containerColor = DermaGreen),
+                    shape = RoundedCornerShape(50)
+                ) { Text("Save", fontSize = settings.textMd.sp, maxLines = 1) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { namePromptSnoozed = true; showNamePrompt = false },
+                    shape = RoundedCornerShape(50)
+                ) { Text("Later", fontSize = settings.textMd.sp, color = Color(0xFF6B7280), maxLines = 1) }
+            }
+        )
+    }
+
     // Contribute to Research prompt -- shown once, right after a new account finishes email
     // verification (see NewUserSignal). Existing users logging back in never see this again.
-    if (showContributePrompt) {
+    // Waits for the name prompt so the two never stack.
+    if (showContributePrompt && !showNamePrompt) {
         DermaAlertDialog(
             onDismissRequest = { showContributePrompt = false },
             icon = { Icon(Icons.Default.Science, contentDescription = null, tint = Color(0xFF7C3AED)) },
@@ -426,6 +509,9 @@ fun HomeScreen(navController: NavController) {
     }
 }
 
+// "Later" on the name prompt holds for as long as the app stays open; it asks again next launch.
+private var namePromptSnoozed = false
+
 /** Home's hero card: the most recent saved scan, or a nudge to take the first one. */
 @Composable
 private fun LatestScanCard(scan: ScanRecord?, navController: NavController, onStartScan: () -> Unit) {
@@ -434,7 +520,7 @@ private fun LatestScanCard(scan: ScanRecord?, navController: NavController, onSt
     val interaction = remember { MutableInteractionSource() }
     val openScan = {
         if (scan != null) {
-            navController.navigate(Screen.ScanResult.createRoute(imageUri = scan.imagePath.ifEmpty { null }, scanId = scan.id))
+            navController.navigate(Screen.ScanResult.createRoute(imageUri = scan.imagePath.ifEmpty { null }, scanId = scan.scanId))
         } else onStartScan()
     }
     Box(

@@ -11,13 +11,11 @@ import androidx.room.PrimaryKey
 data class User(
     @PrimaryKey(autoGenerate = true)
     val userId: Int = 0,
-    val fullName: String,
+    // Null until the user sets a name in Register or Edit Profile -- never guessed from the email
+    // address or the Google profile.
+    val fullName: String? = null,
     val email: String,
-    // Empty for Firebase-authenticated accounts (Firebase manages the real credential). Only
-    // ever non-empty for legacy local-only accounts from before Firebase Auth was added.
-    val passwordHash: String,
+    // The password itself lives in Firebase Auth, never here.
     val firebaseUid: String? = null,
-    val createdAt: Long = System.currentTimeMillis(),
-    val notificationEnabled: Boolean = true
-
+    val createdAt: Long = System.currentTimeMillis()
 )

@@ -46,7 +46,7 @@ class ContributionUploadWorker(
                 val remoteFilename = "${safeCondition}_${UUID.randomUUID()}.jpg"
 
                 if (!uploadImage(file, remoteFilename, scan.condition)) continue
-                db.scanRecordDao().markContributionUploaded(scan.id)
+                db.scanRecordDao().markContributionUploaded(scan.scanId)
             }
             Result.success()
         } catch (e: Exception) {

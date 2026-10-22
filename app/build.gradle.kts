@@ -40,10 +40,10 @@ android {
         // versionCode is the build counter Android uses to order installs -- it has to climb for
         // a device to accept one APK over another. 127 is the commit count at the first release,
         // so it already reflects the real build history rather than restarting at 1.
-        versionCode = 127
+        versionCode = 128
         // Shown in Profile > About, read from BuildConfig so the screen can never drift from the
         // build the way a hardcoded "1.0.0" string did.
-        versionName = "1.1.0"
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

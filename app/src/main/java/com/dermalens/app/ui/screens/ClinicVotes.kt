@@ -98,5 +98,44 @@ suspend fun castClinicVote(placeId: String, userId: String, vote: String): Clini
         val currentOpen = (statusSnap.getLong("confirmedOpenCount") ?: 0L) + openDelta
         val currentClosed = (statusSnap.getLong("confirmedClosedCount") ?: 0L) + closedDelta
         ClinicVoteTally(currentOpen.toInt(), currentClosed.toInt(), newVote)
-    }.awaitTask()
+    }.awaitTask().also { tally -> recordVotedClinic(placeId, userId, voted = tally.myVote != null) }
+}
+
+/**
+ * The account's own list of clinics it has voted on (users/{uid}/clinicVotes/{placeId}). A vote
+ * lives under its clinic, and the rules only let a user read their own vote one clinic at a time,
+ * so without this list Delete Account could not find the votes to withdraw.
+ */
+private fun votedClinicDoc(userId: String, placeId: String) =
+    FirebaseFirestore.getInstance().collection("users").document(userId).collection("clinicVotes").document(placeId)
+
+// Written after the vote's own transaction, not inside it: if the security rules for this list
+// haven't been published yet, the vote itself still goes through and only the list entry fails.
+private fun recordVotedClinic(placeId: String, userId: String, voted: Boolean) {
+    val doc = votedClinicDoc(userId, placeId)
+    if (voted) doc.set(mapOf("votedAt" to FieldValue.serverTimestamp())) else doc.delete()
+}
+
+/**
+ * For Delete Account: withdraws every clinic vote this account has cast, so the open/closed counts
+ * drop by one each and no vote is left behind under the deleted account's id. Must run while the
+ * account still exists. Throws if a vote can't be withdrawn (e.g. offline), so the caller stops
+ * before deleting the account. PERMISSION_DENIED (rules for the list not published) reads as
+ * "nothing recorded".
+ */
+suspend fun withdrawAllClinicVotes(userId: String) {
+    val listed = try {
+        FirebaseFirestore.getInstance().collection("users").document(userId)
+            .collection("clinicVotes").get().awaitTask().documents
+    } catch (e: com.google.firebase.firestore.FirebaseFirestoreException) {
+        if (e.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED) return
+        throw e
+    }
+    for (entry in listed) {
+        val placeId = entry.id
+        val myVote = clinicStatusDoc(placeId).collection("votes").document(userId).get().awaitTask().getString("vote")
+        // Casting the same vote again clears it, adjusting the counts in the same transaction.
+        if (myVote != null) castClinicVote(placeId, userId, myVote)
+        votedClinicDoc(userId, placeId).delete().awaitTask()
+    }
 }
