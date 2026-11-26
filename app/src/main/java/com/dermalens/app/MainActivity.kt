@@ -85,10 +85,10 @@ class MainActivity : ComponentActivity() {
             NotificationScheduler.scheduleDailyReminder(this)
         }
 
-        // Re-arms the contribution upload worker on every launch, not just when the toggle is
-        // flipped -- covers users who already had this enabled from before the upload pipeline
-        // existed (enqueueUniquePeriodicWork with KEEP is a no-op if it's already scheduled).
-        if (getSharedPreferences(DermaPrefs.PREFS_NAME, MODE_PRIVATE).getBoolean(DermaPrefs.KEY_CONTRIBUTE_DATA, false)) {
+        // Re-arms the contribution upload worker on every launch once the Terms (which carry the
+        // research-contribution clause) are accepted. enqueueUniquePeriodicWork with KEEP is a
+        // no-op if it's already scheduled, and the worker no-ops when nothing is pending.
+        if (com.dermalens.app.ui.screens.TermsAgreement.isAccepted(this)) {
             ContributionUploadScheduler.scheduleUpload(this)
         }
 

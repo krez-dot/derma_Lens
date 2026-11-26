@@ -271,7 +271,10 @@ object DermaPrefs {
     const val KEY_HAS_SEEN_ONBOARDING = "has_seen_onboarding"
     const val KEY_FONT_SIZE = "font_size"
     const val KEY_HIGH_CONTRAST = "high_contrast"
-    const val KEY_CONTRIBUTE_DATA = "contribute_data"
+    // Which Terms and Conditions version this phone accepted, and when (see TermsAgreement).
+    // Replaced the old "contribute_data" toggle: research contribution is now a Terms clause.
+    const val KEY_TERMS_ACCEPTED_VERSION = "terms_accepted_version"
+    const val KEY_TERMS_ACCEPTED_AT = "terms_accepted_at"
     const val KEY_NOTIFICATIONS_ENABLED = "notifications_enabled"
     // Time of day the user picked for the daily scan reminder, as 24h hour + minute. Before this
     // existed the reminder just fired 24h after the toggle was flipped, so it landed at whatever
@@ -279,20 +282,13 @@ object DermaPrefs {
     const val KEY_REMINDER_HOUR = "reminder_hour"
     const val KEY_REMINDER_MINUTE = "reminder_minute"
     const val KEY_HIDE_SCAN_CONDITIONS_INFO = "hide_scan_conditions_info"
+    const val KEY_HIDE_MONITOR_TIP = "hide_monitor_tip"
     // Local mirror of the signed-in account's "Back Up Scan History" choice. The source of truth
     // is users/{uid}.syncEnabled in Firestore (so a second phone learns it at login); this copy
     // just lets save/delete/edit paths check it without a network read. Cleared on logout.
     const val KEY_SYNC_HISTORY = "sync_history"
 }
 
-/**
- * Set right before navigating a freshly-verified new account to Home, consumed once there to
- * show the Contribute to Research consent prompt. In-memory only (not persisted) since it only
- * needs to survive the single VerifyEmail-to-Home navigation within the same app process.
- */
-object NewUserSignal {
-    var pendingContributePrompt: Boolean = false
-}
 /** Light lavender page background used behind the card-based screens. */
 val DermaPageBackground = Color(0xFFF7F6FC)
 

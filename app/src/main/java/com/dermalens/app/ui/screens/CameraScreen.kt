@@ -39,6 +39,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -210,11 +211,36 @@ fun ScanScreen(navController: NavController, continueGroupId: Int = -1) {
         }
     }
 
+    // Pre-scan check-in comes first, before the camera (panel revision). Kept as its encoded
+    // string so it survives rotation / process death like the rest of this screen's state.
+    var checkIn by rememberSaveable { mutableStateOf<String?>(null) }
+    // "Scan Again" continues the same spot, so where it is is already known -- reuse it instead of
+    // asking again. (first = loaded yet, second = the area, blank if unknown.)
+    val knownArea by produceState(initialValue = (continueGroupId == -1) to "", continueGroupId) {
+        if (continueGroupId != -1) {
+            val area = com.dermalens.app.data.db.DermaDatabase.getDatabase(context).scanRecordDao().getLastBodyAreaInGroup(continueGroupId)
+            value = true to area.orEmpty()
+        }
+    }
+    // What this user usually notes, learned on-device from their past check-ins.
+    val learned by produceState(initialValue = PersonalPatterns.EMPTY) { value = PersonalPatterns.load(context) }
+    if (checkIn == null) {
+        if (!knownArea.first) return // a one-frame DB read; avoids flashing question 1
+        PreScanQuestionsScreen(
+            isFollowUp = continueGroupId != -1,
+            knownBodyArea = knownArea.second,
+            usualTriggers = learned.usualTriggers,
+            onBack = { navController.popBackStack() },
+            onDone = { checkIn = it.encode() }
+        )
+        return
+    }
+
     LaunchedEffect(Unit) {
         if (!hasCameraPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
-    if (hasCameraPermission) CameraPreviewScreen(navController, continueGroupId)
+    if (hasCameraPermission) CameraPreviewScreen(navController, continueGroupId, checkIn)
     else CameraPermissionDeniedScreen(
         onRequestPermission = { permissionLauncher.launch(Manifest.permission.CAMERA) },
         onOpenSettings = {
@@ -229,7 +255,7 @@ fun ScanScreen(navController: NavController, continueGroupId: Int = -1) {
 }
 
 @Composable
-fun CameraPreviewScreen(navController: NavController, continueGroupId: Int = -1) {
+fun CameraPreviewScreen(navController: NavController, continueGroupId: Int = -1, checkIn: String? = null) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val prefs = remember { context.getSharedPreferences(DermaPrefs.PREFS_NAME, android.content.Context.MODE_PRIVATE) }
@@ -404,7 +430,7 @@ fun CameraPreviewScreen(navController: NavController, continueGroupId: Int = -1)
                                     if (croppedUri == null) {
                                         android.widget.Toast.makeText(context, "Couldn't read this photo. Please try another one.", android.widget.Toast.LENGTH_SHORT).show()
                                     } else {
-                                        navController.navigate(Screen.ScanResult.createRoute(croppedUri.toString(), continueGroupId = continueGroupId))
+                                        navController.navigate(Screen.ScanResult.createRoute(croppedUri.toString(), continueGroupId = continueGroupId, checkIn = checkIn))
                                     }
                                 }
                             } else {
@@ -428,7 +454,7 @@ fun CameraPreviewScreen(navController: NavController, continueGroupId: Int = -1)
                                                 }
                                                 isScanning = false
                                                 navController.navigate(
-                                                    Screen.ScanResult.createRoute((croppedUri ?: uri).toString(), continueGroupId = continueGroupId)
+                                                    Screen.ScanResult.createRoute((croppedUri ?: uri).toString(), continueGroupId = continueGroupId, checkIn = checkIn)
                                                 )
                                             }
                                         },
@@ -594,9 +620,70 @@ fun CameraPreviewScreen(navController: NavController, continueGroupId: Int = -1)
 
             Spacer(modifier = Modifier.height(16.dp))
             Box(modifier = Modifier.padding(horizontal = 20.dp)) {
-                DiagnosticAidDisclaimer(asGuide = true)
+                if (selectedImageUri == null) ScanInstructionsCard() else DiagnosticAidDisclaimer(asGuide = true)
             }
         }
+    }
+}
+
+/**
+ * Standard shooting setup shown under the shutter, so every scan is taken the same way (same
+ * distance, zoom and light) and one good photo is enough instead of retaking several.
+ */
+@Composable
+private fun ScanInstructionsCard() {
+    val shape = RoundedCornerShape(24.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Color.Black.copy(alpha = 0.5f))
+            .border(1.dp, Color.White.copy(alpha = 0.2f), shape)
+            .padding(horizontal = 14.dp, vertical = 14.dp)
+    ) {
+        Text(
+            "How to take one good photo",
+            color = Color.White,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            ScanInstructionItem(Icons.Default.Straighten, "Distance", "10–15 cm\naway")
+            ScanInstructionItem(Icons.Default.ZoomIn, "Zoom", "Keep at 1x,\nmove closer")
+            ScanInstructionItem(Icons.Outlined.WbSunny, "Lighting", "Daylight,\nno flash")
+            ScanInstructionItem(Icons.Default.CenterFocusStrong, "Focus", "Hold still,\nspot sharp")
+        }
+    }
+}
+
+@Composable
+private fun RowScope.ScanInstructionItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    detail: String
+) {
+    Column(
+        modifier = Modifier.weight(1f).semantics(mergeDescendants = true) {},
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier.size(36.dp).clip(CircleShape).background(DermaGreen.copy(alpha = 0.85f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(19.dp))
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            detail,
+            color = Color.White.copy(alpha = 0.8f),
+            fontSize = 11.sp,
+            lineHeight = 14.sp,
+            textAlign = TextAlign.Center
+        )
     }
 }
 

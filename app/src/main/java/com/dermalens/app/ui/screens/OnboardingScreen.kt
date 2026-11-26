@@ -81,6 +81,9 @@ fun SplashScreen(navController: NavController) {
             delay(1200)
         }
         when {
+            // Signed in on a build from before the Terms existed (or before a new Terms version):
+            // they agree first, since research contribution now depends on it.
+            isLoggedIn && !TermsAgreement.isAccepted(context) -> navController.navigate(Screen.Terms.route) { popUpTo(Screen.Splash.route) { inclusive = true } }
             isLoggedIn -> navController.navigate(Screen.Home.route) { popUpTo(Screen.Splash.route) { inclusive = true } }
             hasSeenOnboarding -> navController.navigate(Screen.Login.route) { popUpTo(Screen.Splash.route) { inclusive = true } }
             else -> navController.navigate(Screen.Onboarding.route) { popUpTo(Screen.Splash.route) { inclusive = true } }

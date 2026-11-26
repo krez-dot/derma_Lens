@@ -96,8 +96,8 @@ object NotificationScheduler {
 
 }
 
-/** Schedules/cancels [ContributionUploadWorker], gated on the same "Contribute to Research"
- *  consent toggle as the local save step in ScanResultScreen.kt. */
+/** Schedules/cancels [ContributionUploadWorker]. Runs once the Terms and Conditions (which
+ *  include the research-contribution clause) are accepted -- see TermsAgreement. */
 object ContributionUploadScheduler {
 
     fun scheduleUpload(context: Context) {

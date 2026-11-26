@@ -30,5 +30,16 @@ data class ScanRecord(
     // True once ContributionUploadWorker has successfully uploaded this scan's image to Google
     // Drive (via the Apps Script endpoint) -- separate from contributedForTraining (which just means "user consented and the
     // image was saved locally, pending upload") so the worker knows what's left to do.
-    val uploadedForTraining: Boolean = false
+    val uploadedForTraining: Boolean = false,
+    // ── Pre-scan check-in (see SymptomCheckIn.kt) ──
+    // The user's own answers, asked before the photo is taken. They never change the detection;
+    // they're what Self Monitoring and Insights track over time, since the model has no severity
+    // score. Blank / -1 means "not answered" (every scan saved before check-ins existed).
+    val bodyArea: String = "",
+    val duration: String = "",
+    // 0 None, 1 Mild, 2 Moderate, 3 Severe
+    val itchLevel: Int = -1,
+    val painLevel: Int = -1,
+    // Only asked on "Scan Again" of an existing timeline: Better / About the same / Worse.
+    val feelsVsLast: String = ""
 )

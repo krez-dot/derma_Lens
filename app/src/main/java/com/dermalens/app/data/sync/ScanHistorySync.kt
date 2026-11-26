@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.dermalens.app.data.db.DermaDatabase
 import com.dermalens.app.data.model.ScanRecord
+import com.dermalens.app.data.model.ScanTrigger
 import com.dermalens.app.data.model.TrackGroup
 import com.dermalens.app.ui.screens.DermaPrefs
 import com.google.android.gms.tasks.Task
@@ -82,7 +83,7 @@ object ScanHistorySync {
     private suspend fun groupKeyOf(context: Context, scan: ScanRecord): Long =
         DermaDatabase.getDatabase(context).scanRecordDao().getGroupStartDate(scan.groupId) ?: scan.scanDate
 
-    private fun recordFields(scan: ScanRecord, groupKey: Long): Map<String, Any> = mapOf(
+    private fun recordFields(scan: ScanRecord, groupKey: Long, triggers: List<String>): Map<String, Any> = mapOf(
         "condition" to scan.condition,
         "confidence" to scan.confidence.toDouble(),
         "notes" to scan.notes,
@@ -90,13 +91,21 @@ object ScanHistorySync {
         "groupKey" to groupKey,
         "deleted" to false,
         "updatedAt" to FieldValue.serverTimestamp(),
+        // Pre-scan check-in answers (see SymptomCheckIn.kt). Blank / -1 = not answered.
+        "bodyArea" to scan.bodyArea,
+        "duration" to scan.duration,
+        "itchLevel" to scan.itchLevel,
+        "painLevel" to scan.painLevel,
+        "feelsVsLast" to scan.feelsVsLast,
+        "triggers" to triggers,
     )
 
     /** Uploads (or overwrites) one scan record. No-op unless backup is on and someone is signed in. */
     suspend fun pushScan(context: Context, scan: ScanRecord) {
         if (!isEnabled(context)) return
         val uid = currentUid() ?: return
-        val fields = recordFields(scan, groupKeyOf(context, scan))
+        val triggers = DermaDatabase.getDatabase(context).scanRecordDao().getTriggersForScan(scan.scanId).map { it.triggerName }
+        val fields = recordFields(scan, groupKeyOf(context, scan), triggers)
         scansRef(uid).document(scan.scanDate.toString()).set(fields)
             .addOnFailureListener { Log.e(TAG, "pushScan failed", it) }
     }
@@ -241,7 +250,7 @@ object ScanHistorySync {
                 val groupKey = doc.getLong("groupKey") ?: date
                 val groupId = groupIdByKey[groupKey]
                     ?: dao.insertGroup(TrackGroup(userId = userId)).toInt().also { groupIdByKey[groupKey] = it }
-                dao.insertScan(
+                val newScanId = dao.insertScan(
                     ScanRecord(
                         groupId = groupId,
                         condition = condition,
@@ -249,8 +258,17 @@ object ScanHistorySync {
                         notes = notes,
                         scanDate = date,
                         imagePath = "", // photos are not backed up
+                        bodyArea = doc.getString("bodyArea") ?: "",
+                        duration = doc.getString("duration") ?: "",
+                        itchLevel = doc.getLong("itchLevel")?.toInt() ?: -1,
+                        painLevel = doc.getLong("painLevel")?.toInt() ?: -1,
+                        feelsVsLast = doc.getString("feelsVsLast") ?: "",
                     )
-                )
+                ).toInt()
+                val triggers = (doc.get("triggers") as? List<*>)?.filterIsInstance<String>().orEmpty()
+                if (triggers.isNotEmpty()) {
+                    dao.insertTriggers(triggers.map { ScanTrigger(scanId = newScanId, triggerName = it) })
+                }
                 restored++
             }
 

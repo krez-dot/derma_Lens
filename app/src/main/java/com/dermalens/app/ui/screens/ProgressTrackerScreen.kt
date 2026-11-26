@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.dermalens.app.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
@@ -21,6 +23,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,7 +56,12 @@ import kotlinx.coroutines.withContext
 fun countDaysTracked(scans: List<com.dermalens.app.data.model.ScanRecord>): Int =
     if (scans.isEmpty()) 0 else ((System.currentTimeMillis() - scans.minOf { it.scanDate }) / (1000L * 60L * 60L * 24L)).toInt() + 1
 
-data class ScanEntry(val scanId: Int, val date: String, val confidence: Float, val notes: String, val imagePath: String = "", val rawDate: Long = 0L, val isClear: Boolean = false)
+// spotCount is how many detection boxes the scan saved (null: no photo, so no boxes kept).
+// itchLevel / painLevel / feelsVsLast / bodyArea come from the pre-scan check-in (-1 / "" = not answered).
+data class ScanEntry(
+    val scanId: Int, val date: String, val confidence: Float, val notes: String, val imagePath: String = "", val rawDate: Long = 0L, val isClear: Boolean = false,
+    val spotCount: Int? = null, val itchLevel: Int = -1, val painLevel: Int = -1, val feelsVsLast: String = "", val bodyArea: String = ""
+)
 // groupId identifies which specific occurrence/spot this card represents -- passed back to
 // Scan when "Scan Again" is tapped so the resulting new scan explicitly continues *this* card's
 // trend instead of just matching by condition name. See TrackGroup.
@@ -90,12 +98,14 @@ fun ProgressTrackerScreen(navController: NavController) {
     // one condition (and Profile's own "Conditions" stat already counts it this way).
     var conditionCount by remember { mutableStateOf(0) }
     var conditionTracks by remember { mutableStateOf(emptyList<ConditionTrack>()) }
+    var showTip by remember { mutableStateOf(!prefs.getBoolean(DermaPrefs.KEY_HIDE_MONITOR_TIP, false)) }
 
     LaunchedEffect(refreshKey) {
         val savedEmail = prefs.getString(DermaPrefs.KEY_USER_EMAIL, "") ?: ""
         val user = db.userDao().getUserByEmail(savedEmail)
         if (user != null) {
             val scans = db.scanRecordDao().getScansByUserOnce(user.userId)
+            val boxCounts = db.scanRecordDao().getBoxCountsByUser(user.userId).associate { it.scanId to it.count }
             totalScans = scans.size
             conditionCount = scans.map { it.condition }.filter { it != NO_CONDITION_FOUND }.distinct().size
             // Reset to 0 when empty -- otherwise deleting the last scan left the old value up.
@@ -131,7 +141,14 @@ fun ProgressTrackerScreen(navController: NavController) {
                             notes = scan.notes,
                             imagePath = scan.imagePath,
                             rawDate = scan.scanDate,
-                            isClear = scan.condition == NO_CONDITION_FOUND
+                            isClear = scan.condition == NO_CONDITION_FOUND,
+                            // Boxes are only kept alongside a photo, so a photo-less scan (e.g.
+                            // restored from backup) has no count rather than a misleading 0.
+                            spotCount = if (scan.imagePath.isNotEmpty()) boxCounts[scan.scanId] ?: 0 else null,
+                            itchLevel = scan.itchLevel,
+                            painLevel = scan.painLevel,
+                            feelsVsLast = scan.feelsVsLast,
+                            bodyArea = scan.bodyArea
                         )
                     },
                     groupId = groupId,
@@ -168,9 +185,8 @@ fun ProgressTrackerScreen(navController: NavController) {
                 Column {
                     Eyebrow("Your journey")
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("Progress", fontSize = settings.textDisplay.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp, color = settings.textPrimary)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text("Every scan you've saved, over time", fontSize = settings.textMd.sp, color = settings.textSecondary)
+                    // Renamed from "Progress" (panel revision).
+                    Text("Self Monitoring", fontSize = settings.textDisplay.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp, color = settings.textPrimary)
                 }
             }
 
@@ -180,19 +196,44 @@ fun ProgressTrackerScreen(navController: NavController) {
                 StatRow(listOf("$totalScans" to "Total scans", "$conditionCount" to "Conditions", "$daysTracked" to "Days tracked"))
             }
 
-            item {
+            if (totalScans > 0) {
+                item {
+                    SoftCard(modifier = Modifier.fillMaxWidth(), onClick = { navController.navigate(Screen.Insights.route) { launchSingleTop = true } }) {
+                        Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(DermaGreenLight), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Insights, contentDescription = null, tint = DermaGreen, modifier = Modifier.size(22.dp))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Insights", fontSize = settings.textLg.sp, fontWeight = FontWeight.Bold, color = settings.textPrimary)
+                                Text("Patterns and triggers across your scans", fontSize = settings.textBase.sp, color = settings.textSecondary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            }
+                            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = DermaSubtle)
+                        }
+                    }
+                }
+            }
+
+            // One-time tip; dismissed for good with the X.
+            if (showTip) item {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(18.dp))
                         .background(if (settings.highContrast) Color(0xFFEDE9FE) else DermaGreenLight)
                         .then(if (settings.highContrast) Modifier.border(1.dp, DermaGreenDark, RoundedCornerShape(18.dp)) else Modifier)
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                        .padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(Icons.Outlined.Lightbulb, contentDescription = null, tint = DermaGreen, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(10.dp))
-                    Text("Scan the same spot regularly to see how it changes over time.", fontSize = settings.textBase.sp, color = DermaGreenDark, lineHeight = (settings.textBase * 1.4f).sp)
+                    Text("Same spot, same distance, same light.", fontSize = settings.textBase.sp, fontWeight = FontWeight.Medium, color = DermaGreenDark, modifier = Modifier.weight(1f))
+                    IconButton(onClick = {
+                        showTip = false
+                        prefs.edit().putBoolean(DermaPrefs.KEY_HIDE_MONITOR_TIP, true).apply()
+                    }) {
+                        Icon(Icons.Default.Close, contentDescription = "Dismiss tip", tint = DermaGreenDark, modifier = Modifier.size(18.dp))
+                    }
                 }
             }
 
@@ -244,6 +285,8 @@ fun ProgressTrackerScreen(navController: NavController) {
                 EntranceAnimation(delayMillis = index.coerceAtMost(6) * 70) {
                     ConditionTrackCard(
                         track = track,
+                        // Collapsed by default so the list stays scannable; a lone spot opens.
+                        initiallyExpanded = conditionTracks.size == 1,
                         onScanAgain = { navController.navigate(Screen.Scan.createRoute(continueGroupId = track.groupId)) { launchSingleTop = true } },
                         onDeleteScan = { scanId ->
                             scope.launch {
@@ -316,8 +359,8 @@ fun StatCard(value: String, label: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun ConditionTrackCard(track: ConditionTrack, onScanAgain: () -> Unit, onDeleteScan: (Int) -> Unit, onEditNote: (Int, String) -> Unit, onOpenScan: (ScanEntry) -> Unit) {
-    var isExpanded by remember { mutableStateOf(true) }
+fun ConditionTrackCard(track: ConditionTrack, onScanAgain: () -> Unit, onDeleteScan: (Int) -> Unit, onEditNote: (Int, String) -> Unit, onOpenScan: (ScanEntry) -> Unit, initiallyExpanded: Boolean = false) {
+    var isExpanded by rememberSaveable(track.groupId) { mutableStateOf(initiallyExpanded) }
     val settings = LocalAppSettings.current
 
     SoftCard(modifier = Modifier.fillMaxWidth()) {
@@ -341,8 +384,14 @@ fun ConditionTrackCard(track: ConditionTrack, onScanAgain: () -> Unit, onDeleteS
                         color = settings.textSecondary,
                         maxLines = 1
                     )
-                    if (track.latestClear) {
-                        Text("Latest scan looks clear", fontSize = settings.textSm.sp, fontWeight = FontWeight.SemiBold, color = DermaSuccessText)
+                    // Progress at a glance, even with the card collapsed (see assessSpot).
+                    assessSpot(track)?.let {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            SpotStatusBadge(it.status)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            MiniTrend(track)
+                        }
                     }
                 }
                 val chevronRotation by animateFloatAsState(if (isExpanded) 0f else 180f, label = "chevronRotation")
@@ -366,6 +415,7 @@ fun ConditionTrackCard(track: ConditionTrack, onScanAgain: () -> Unit, onDeleteS
             ) {
                 Column {
                     Spacer(modifier = Modifier.height(14.dp))
+                    SpotChangeSummary(track)
                     // Newest first, so the scan you just saved is right at the top.
                     val newestFirst = track.scans.asReversed()
                     newestFirst.forEachIndexed { index, scan ->
@@ -516,15 +566,30 @@ fun TimelineNode(scan: ScanEntry, isLatest: Boolean, isLastRow: Boolean, color: 
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                scan.notes.ifBlank { "Tap the pencil to add a note" },
-                fontSize = settings.textBase.sp,
-                color = if (scan.notes.isBlank()) DermaMuted else settings.textSecondary,
-                lineHeight = (settings.textBase * 1.35f).sp,
-                maxLines = 2,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            // Check-in answers as small chips (dot colours match the itch/pain chart lines).
+            val chips = listOfNotNull(
+                scan.itchLevel.takeIf { it >= 0 }?.let { ItchColor to "Itch ${CheckInOptions.levelLabel(it).lowercase()}" },
+                scan.painLevel.takeIf { it >= 0 }?.let { PainColor to "Pain ${CheckInOptions.levelLabel(it).lowercase()}" },
+                scan.spotCount?.takeIf { !scan.isClear }?.let { DermaSubtle to "$it ${if (it == 1) "spot" else "spots"}" }
             )
+            if (chips.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    chips.forEach { (dot, label) -> InfoChip(dot, label) }
+                }
+            }
+            // Only a note the user wrote; the automatic "Scanned on <date>" just repeated the date.
+            val userNote = scan.notes.takeUnless { it.isBlank() || it.startsWith("Scanned on ") }
+            if (userNote != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    userNote,
+                    fontSize = settings.textSm.sp,
+                    color = settings.textSecondary,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
         }
         Spacer(modifier = Modifier.width(8.dp))
         Column(horizontalAlignment = Alignment.End) {
@@ -542,5 +607,19 @@ fun TimelineNode(scan: ScanEntry, isLatest: Boolean, isLastRow: Boolean, color: 
                 }
             }
         }
+    }
+}
+
+/** Small rounded chip: coloured dot + short label (e.g. "Itch mild"). */
+@Composable
+private fun InfoChip(dot: Color, label: String) {
+    val settings = LocalAppSettings.current
+    Row(
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(Color.White).padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(dot))
+        Spacer(modifier = Modifier.width(5.dp))
+        Text(label, fontSize = settings.textSm.sp, fontWeight = FontWeight.Medium, color = settings.textSecondary, maxLines = 1)
     }
 }

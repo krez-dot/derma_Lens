@@ -46,6 +46,7 @@ import androidx.room.withTransaction
 import com.dermalens.app.data.db.DermaDatabase
 import com.dermalens.app.data.model.BoundingBox
 import com.dermalens.app.data.model.ScanRecord
+import com.dermalens.app.data.model.ScanTrigger
 import com.dermalens.app.data.model.TrackGroup
 import com.dermalens.app.data.model.User
 import com.dermalens.app.ui.screens.DermaPrefs
@@ -130,12 +131,10 @@ val mockDetectionResults = listOf(
 )
 
 /**
- * Inserts or updates this scan's history row. Shared by both the "Save to Progress" and
- * "Contribute to Research" buttons so a user who taps both ends up with one row, not two --
- * passing back the previous call's returned id makes the second save an update rather than a
- * duplicate. [contribute] controls only whether the
- * image gets copied out and the row flagged for upload; it never happens as a side effect of
- * plain saving.
+ * Inserts or updates this scan's history row. Passing back the previous call's returned id makes
+ * a second save an update rather than a duplicate. [contribute] flags the row for the research
+ * upload; the user agreed to that in the Terms and Conditions (there's no per-scan or Profile
+ * toggle any more -- panel revision). [checkIn] is the pre-scan answers, saved alongside.
  */
 private suspend fun saveScan(
     context: android.content.Context,
@@ -143,7 +142,8 @@ private suspend fun saveScan(
     imageUri: String?,
     existingScanId: Int?,
     contribute: Boolean,
-    continueGroupId: Int? = null
+    continueGroupId: Int? = null,
+    checkIn: SymptomCheckIn? = null
 ): Int? {
     val db = DermaDatabase.getDatabase(context)
     val prefs = context.getSharedPreferences(DermaPrefs.PREFS_NAME, android.content.Context.MODE_PRIVATE)
@@ -192,7 +192,7 @@ private suspend fun saveScan(
     val id = withContext(NonCancellable) {
     val dao = db.scanRecordDao()
     val newId = db.withTransaction {
-        // Keep the group from an earlier save of this same row (e.g. Save to Progress, then
+        // Keep the group from an earlier save of this same row (e.g. a second tap of Save, then
         // Contribute to Research afterward); otherwise continue the card "Scan Again" came from,
         // if it still exists; otherwise ("Start New Scan" / a fresh Scan tab entry) start a group.
         val groupId = existingRecord?.groupId
@@ -209,13 +209,26 @@ private suspend fun saveScan(
             // the next sync "restored" as a photo-less duplicate.
             scanDate = existingRecord?.scanDate ?: System.currentTimeMillis(),
             imagePath = savedImagePath,
-            contributedForTraining = contribute && savedImagePath.isNotEmpty()
+            contributedForTraining = contribute && savedImagePath.isNotEmpty(),
+            // Never undo an upload that already happened on an earlier save of this row.
+            uploadedForTraining = existingRecord?.uploadedForTraining ?: false,
+            bodyArea = checkIn?.bodyArea ?: existingRecord?.bodyArea ?: "",
+            duration = checkIn?.duration ?: existingRecord?.duration ?: "",
+            itchLevel = checkIn?.itchLevel ?: existingRecord?.itchLevel ?: -1,
+            painLevel = checkIn?.painLevel ?: existingRecord?.painLevel ?: -1,
+            feelsVsLast = checkIn?.feelsVsLast ?: existingRecord?.feelsVsLast ?: ""
         )
         val scanId = if (existingRecord != null) {
             dao.updateScan(record)
             existingRecord.scanId
         } else {
             dao.insertScan(record).toInt()
+        }
+        if (checkIn != null) {
+            dao.deleteTriggersForScan(scanId)
+            if (checkIn.triggers.isNotEmpty()) {
+                dao.insertTriggers(checkIn.triggers.map { ScanTrigger(scanId = scanId, triggerName = it) })
+            }
         }
         // Only alongside a saved photo: boxes with no image to draw on mean nothing.
         dao.deleteBoxesForScan(scanId)
@@ -234,7 +247,7 @@ private suspend fun saveScan(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScanResultScreen(navController: NavController, imageUri: String? = null, scanId: Int = -1, continueGroupId: Int = -1) {
+fun ScanResultScreen(navController: NavController, imageUri: String? = null, scanId: Int = -1, continueGroupId: Int = -1, checkIn: SymptomCheckIn? = null) {
     val settings = LocalAppSettings.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -292,16 +305,15 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     // than the original save) updating this same row instead of inserting a duplicate.
     // rememberSaveable, not remember: navigating to another screen (e.g. Find Nearby Clinic) and
     // back disposes this composition, and plain remember would come back reset -- re-enabling
-    // "Save to Progress" with savedScanId forgotten, so a second tap inserted a duplicate row.
+    // "Save" with savedScanId forgotten, so a second tap inserted a duplicate row.
     var isSaved by rememberSaveable { mutableStateOf(isHistoryView) }
     // isSaved only flips to true *after* the async saveScan() call returns, so a rapid
-    // double-tap on "Save to Progress" could pass the `!isSaved` guard twice before the first
+    // double-tap on "Save" could pass the `!isSaved` guard twice before the first
     // save resolved, launching two concurrent saves that both read the same stale
     // savedScanId==null and each insert their own new row instead of the second one updating
     // the first (docs/PRELAUNCH_AUDIT_2026-09-21.md #2). isSaving is set synchronously, before
     // launching the coroutine, so the second tap is blocked immediately rather than racing.
     var isSaving by remember { mutableStateOf(false) }
-    var isContributed by rememberSaveable { mutableStateOf(false) }
     var savedScanId by rememberSaveable { mutableStateOf(if (isHistoryView) scanId else null) }
 
     // When the scan was taken: the saved record's date in history view, or "now" for a fresh scan.
@@ -309,16 +321,8 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     LaunchedEffect(scanId) {
         if (isHistoryView) {
             val record = DermaDatabase.getDatabase(context).scanRecordDao().getScanById(scanId)
-            isContributed = record?.contributedForTraining ?: false
             scanDate = record?.scanDate
         }
-    }
-    // Read once, at composable entry, purely to decide whether the Contribute button shows at
-    // all -- someone who opted out entirely in Profile shouldn't see a per-scan prompt for a
-    // feature they've already declined.
-    val contributionFeatureEnabled = remember {
-        context.getSharedPreferences(DermaPrefs.PREFS_NAME, android.content.Context.MODE_PRIVATE)
-            .getBoolean(DermaPrefs.KEY_CONTRIBUTE_DATA, false)
     }
     // Shown once, the first time a low-confidence result loads -- the inline "No Clear Condition
     // Detected" card below still renders underneath, so dismissing the dialog (rather than
@@ -327,14 +331,6 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     // back to this screen from another one.
     // Not for No Condition Found: that's a real (good) outcome, not a reason to retake.
     var showLowConfidenceDialog by rememberSaveable { mutableStateOf(result.isLowConfidence && !result.isNoCondition) }
-    // Set true only when Save to Progress actually also triggered a research upload (contribute
-    // toggle on + image copy succeeded) -- not on every save, since most saves don't contribute.
-    var showContributionDialog by remember { mutableStateOf(false) }
-    // The actual consent moment -- shown right after a successful save, only if the Contribute
-    // to Research feature is enabled in Profile. A real yes/no choice, not a one-button prompt:
-    // this feature is anonymous and opt-in per the app's own Privacy Policy text, so the user
-    // has to be able to genuinely say no.
-    var showContributePrompt by remember { mutableStateOf(false) }
     // Matches the image's real aspect ratio once loaded so the overlay box (normalized 0..1 to
     // the image itself) lines up pixel-for-pixel with no letterbox offset to account for.
     var imageAspectRatio by remember(imageUri) { mutableStateOf(1f) }
@@ -346,54 +342,6 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
     var revealed by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { revealed = true }
 
-    if (showContributePrompt) {
-        DermaAlertDialog(
-            onDismissRequest = { showContributePrompt = false },
-            icon = { Icon(Icons.Default.CloudUpload, contentDescription = null, tint = DermaGreen) },
-            title = { Text("Contribute to Research?", fontWeight = FontWeight.Bold) },
-            text = {
-                Text(
-                    "Would you like to also contribute this scan to help improve future versions " +
-                        "of the detection model? The image is uploaded anonymously -- no name, " +
-                        "email, or account info is attached, only the image and its detected " +
-                        "condition.",
-                    fontSize = settings.textMd.sp
-                )
-            },
-            confirmButton = {
-                Button(onClick = {
-                    showContributePrompt = false
-                    scope.launch {
-                        savedScanId = saveScan(context, result, imageUri, savedScanId, contribute = true, continueGroupId = continueGroupId.takeIf { it != -1 })
-                        isContributed = true
-                        com.dermalens.app.worker.ContributionUploadScheduler.triggerImmediateUpload(context)
-                        showContributionDialog = true
-                    }
-                }) { Text("Yes, contribute") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showContributePrompt = false }) { Text("No thanks") }
-            }
-        )
-    }
-
-    if (showContributionDialog) {
-        DermaAlertDialog(
-            onDismissRequest = { showContributionDialog = false },
-            icon = { Icon(Icons.Default.CloudUpload, contentDescription = null, tint = DermaGreen) },
-            title = { Text("Thank You!", fontWeight = FontWeight.Bold) },
-            text = {
-                Text(
-                    "This image has been uploaded to our secure cloud storage. Thank you for " +
-                        "contributing to research! 😊",
-                    fontSize = settings.textMd.sp
-                )
-            },
-            confirmButton = {
-                Button(onClick = { showContributionDialog = false }) { Text("OK") }
-            }
-        )
-    }
 
     if (showLowConfidenceDialog) {
         // Analysis Unavailable is an app-side failure, not a photo problem -- it used to fall
@@ -578,19 +526,41 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                 }
                 if (result.isNoCondition) {
                     InfoChip("Looks clear", Color(0xFFDCFCE7), DermaSuccessText)
-                    if (isSaved) InfoChip("Saved to Progress", Color(0xFFDCFCE7), DermaSuccessText)
+                    if (isSaved) InfoChip("Saved", Color(0xFFDCFCE7), DermaSuccessText)
                 } else if (result.isLowConfidence) {
                     InfoChip("No clear match", Color(0xFFF3F4F6), Color(0xFF4B5563))
                 } else {
                     val regions = result.boundingBoxes.size
                     if (regions > 0) InfoChip("$regions region${if (regions == 1) "" else "s"} detected", Color.White, settings.textSecondary)
-                    if (isSaved) InfoChip("Saved to Progress", Color(0xFFDCFCE7), DermaSuccessText)
+                    if (isSaved) InfoChip("Saved", Color(0xFFDCFCE7), DermaSuccessText)
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
             DiagnosticAidDisclaimer(asGuide = true)
             Spacer(modifier = Modifier.height(16.dp))
+
+            // What the user answered before this scan: the fresh answers, or the saved ones when
+            // reopening a scan from Self Monitoring.
+            val shownCheckIn by produceState(initialValue = checkIn, scanId) {
+                if (isHistoryView) {
+                    val dao = DermaDatabase.getDatabase(context).scanRecordDao()
+                    val record = dao.getScanById(scanId)
+                    if (record != null) {
+                        value = SymptomCheckIn(
+                            bodyArea = record.bodyArea, duration = record.duration,
+                            itchLevel = record.itchLevel, painLevel = record.painLevel,
+                            feelsVsLast = record.feelsVsLast,
+                            triggers = dao.getTriggersForScan(scanId).map { it.triggerName }
+                        )
+                    }
+                }
+            }
+            val learnedPatterns by produceState(initialValue = PersonalPatterns.EMPTY) { value = PersonalPatterns.load(context) }
+            shownCheckIn?.let {
+                CheckInSummaryCard(it, matches = learnedPatterns.matching(it.triggers))
+                Spacer(modifier = Modifier.height(12.dp))
+            }
 
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 ResultCard(icon = Icons.Outlined.Info, iconBg = DermaGreenLight, iconTint = DermaGreen, title = if (result.isLowConfidence) "About this result" else "About this condition") {
@@ -716,17 +686,15 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                     (result.isNoCondition && (continueGroupId != -1 || isHistoryView))
                 if (canSave) {
                     PillButton(
-                        // Was "Save to History" -- renamed to match the one consistent name the rest
-                        // of the app now uses for this same feature (bottom nav tab, Home's card,
-                        // Profile's menu item, the screen's own header all say "Progress").
-                        text = if (isSaved) "Saved to Progress!" else if (isSaving) "Saving..." else "Save to Progress",
+                        // Same name the rest of the app uses for this feature ("Self Monitoring").
+                        text = if (isSaved) "Saved to Self Monitoring" else if (isSaving) "Saving..." else "Save to Self Monitoring",
                         icon = if (isSaved) Icons.Default.Check else Icons.Default.BookmarkAdd,
                         loading = isSaving,
                         container = if (isSaved) DermaSuccess else DermaGreen,
                         content = Color.White,
                         elevated = true,
                         enabled = !isSaving,
-                        modifier = Modifier.semantics { contentDescription = if (isSaved) "Scan saved to Progress" else "Save scan to Progress" },
+                        modifier = Modifier.semantics { contentDescription = if (isSaved) "Scan saved to Self Monitoring" else "Save scan to Self Monitoring" },
                         onClick = {
                             // Guard set synchronously, before launch -- see isSaving's declaration
                             // above for why this can't wait until the coroutine actually runs.
@@ -734,16 +702,15 @@ fun ScanResultScreen(navController: NavController, imageUri: String? = null, sca
                                 isSaving = true
                                 scope.launch {
                                     try {
-                                        // contribute = false here, deliberately -- saving to history
-                                        // must never silently also upload the image. Whether to
-                                        // contribute is asked right after, as its own explicit
-                                        // yes/no prompt, so consent is real rather than a side
-                                        // effect of tapping this button.
-                                        savedScanId = saveScan(context, result, imageUri, savedScanId, contribute = false, continueGroupId = continueGroupId.takeIf { it != -1 })
+                                        // Research contribution is covered by the Terms and
+                                        // Conditions the user accepted (panel revision: no toggle,
+                                        // no per-scan prompt). Only the 6 conditions' photos go --
+                                        // never a "No Condition Found" scan.
+                                        val contribute = !result.isNoCondition
+                                        savedScanId = saveScan(context, result, imageUri, savedScanId, contribute = contribute, continueGroupId = continueGroupId.takeIf { it != -1 }, checkIn = checkIn)
                                         isSaved = true
-                                        // Research uploads only take the 6 conditions' photos.
-                                        if (contributionFeatureEnabled && !isContributed && !result.isNoCondition) {
-                                            showContributePrompt = true
+                                        if (contribute) {
+                                            com.dermalens.app.worker.ContributionUploadScheduler.triggerImmediateUpload(context)
                                         }
                                     } catch (e: Exception) {
                                         // Was previously unhandled -- a DB insert failure (disk full,

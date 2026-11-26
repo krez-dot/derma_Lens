@@ -45,7 +45,8 @@ import kotlin.math.roundToInt
 sealed class BottomNavItem(val route: String, val icon: ImageVector, val label: String, val navigateRoute: String = route) {
     object Home : BottomNavItem(Screen.Home.route, Icons.Default.Home, "Home")
     object Scan : BottomNavItem(Screen.Scan.route, Icons.Default.CameraAlt, "Scan", navigateRoute = Screen.Scan.createRoute())
-    object Progress : BottomNavItem(Screen.ProgressTracker.route, Icons.Default.Timeline, "Progress")
+    // "Self Monitoring" in full is too wide for a five-tab bar, so the tab says "Monitor".
+    object Progress : BottomNavItem(Screen.ProgressTracker.route, Icons.Default.Timeline, "Monitor")
     object Clinics : BottomNavItem(Screen.ClinicLocator.route, Icons.Default.LocationOn, "Clinics")
     object Profile : BottomNavItem(Screen.Profile.route, Icons.Default.Person, "Profile")
 }
@@ -229,13 +230,11 @@ fun HomeScreen(navController: NavController) {
     var firstName by remember { mutableStateOf("") }
     var recentScan by remember { mutableStateOf<ScanRecord?>(null) }
     var scanCount by remember { mutableStateOf(0) }
-    var showContributePrompt by remember {
-        mutableStateOf(NewUserSignal.pendingContributePrompt.also { NewUserSignal.pendingContributePrompt = false })
-    }
     val scope = rememberCoroutineScope()
     var userEmail by remember { mutableStateOf("") }
     var showNamePrompt by remember { mutableStateOf(false) }
     var nameInput by remember { mutableStateOf("") }
+    var learnedPattern by remember { mutableStateOf<PersonalPatterns.Pattern?>(null) }
 
     LaunchedEffect(Unit) {
         val savedEmail = prefs.getString(DermaPrefs.KEY_USER_EMAIL, "") ?: ""
@@ -268,6 +267,9 @@ fun HomeScreen(navController: NavController) {
         db.scanRecordDao().getScansByUser(id).collect { scans ->
             recentScan = scans.firstOrNull()
             scanCount = scans.size
+            // Re-learns on every change to the user's scans (on-device, see PersonalPatterns).
+            val triggers = db.scanRecordDao().getTriggersByUser(id).groupBy({ it.scanId }, { it.triggerName })
+            learnedPattern = PersonalPatterns.learn(scans, triggers).patterns.firstOrNull()
         }
     }
 
@@ -353,7 +355,7 @@ fun HomeScreen(navController: NavController) {
                             icon = Icons.Default.TrendingUp,
                             iconTint = Color(0xFFE11D48),
                             iconBg = Color(0xFFFFF1F2),
-                            title = "Progress",
+                            title = "Self Monitoring",
                             subtitle = if (scanCount == 0) "No scans yet" else "$scanCount scan${if (scanCount == 1) "" else "s"}",
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                             onClick = { navController.navigate(Screen.ProgressTracker.route) { launchSingleTop = true } }
@@ -365,6 +367,32 @@ fun HomeScreen(navController: NavController) {
             Spacer(modifier = Modifier.height(20.dp))
             DiagnosticAidDisclaimer()
             Spacer(modifier = Modifier.height(16.dp))
+
+            // Personal pattern learned from the user's own check-ins (on-device). Appears once one
+            // is strong enough; tapping opens Insights for the full picture.
+            learnedPattern?.let { pattern ->
+                EntranceAnimation(delayMillis = 120) {
+                    SoftCard(modifier = Modifier.fillMaxWidth(), onClick = { navController.navigate(Screen.Insights.route) { launchSingleTop = true } }) {
+                        Row(modifier = Modifier.padding(18.dp), verticalAlignment = Alignment.Top) {
+                            Box(
+                                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(DermaGreenLight),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Insights, contentDescription = null, tint = DermaGreen, modifier = Modifier.size(22.dp))
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Eyebrow("Your pattern")
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(pattern.tip(), fontSize = settings.textMd.sp, color = settings.textPrimary, lineHeight = (settings.textMd * 1.45f).sp)
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text("Learned from your own check-ins on this phone. Not a diagnosis.", fontSize = settings.textSm.sp, color = DermaSubtle)
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
 
             // Tip of the Day
             EntranceAnimation(delayMillis = 160) {
@@ -465,48 +493,6 @@ fun HomeScreen(navController: NavController) {
         )
     }
 
-    // Contribute to Research prompt -- shown once, right after a new account finishes email
-    // verification (see NewUserSignal). Existing users logging back in never see this again.
-    // Waits for the name prompt so the two never stack.
-    if (showContributePrompt && !showNamePrompt) {
-        DermaAlertDialog(
-            onDismissRequest = { showContributePrompt = false },
-            icon = { Icon(Icons.Default.Science, contentDescription = null, tint = Color(0xFF7C3AED)) },
-            title = { Text("Help Improve DermaLens?", fontWeight = FontWeight.Bold, fontSize = settings.textXl.sp, color = Color(0xFF111827)) },
-            text = {
-                Text(
-                    "Would you like to contribute your skin scan images and results to the DermaLens research dataset? This helps train and improve future versions of the AI model, especially for detecting conditions across a wider range of Filipino skin tones.\n\nYour scans are contributed anonymously and are never linked to your name or account. You can change this anytime in Profile > Contribute to Research.",
-                    fontSize = settings.textMd.sp,
-                    color = Color(0xFF374151),
-                    lineHeight = 20.sp
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        prefs.edit().putBoolean(DermaPrefs.KEY_CONTRIBUTE_DATA, true).apply()
-                        com.dermalens.app.worker.ContributionUploadScheduler.scheduleUpload(context)
-                        showContributePrompt = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED)),
-                    shape = RoundedCornerShape(10.dp)
-                ) { Text("Agree", fontSize = settings.textMd.sp) }
-            },
-            dismissButton = {
-                OutlinedButton(
-                    onClick = {
-                        prefs.edit().putBoolean(DermaPrefs.KEY_CONTRIBUTE_DATA, false).apply()
-                        showContributePrompt = false
-                    },
-                    shape = RoundedCornerShape(10.dp)
-                ) { Text("Disagree", fontSize = settings.textMd.sp) }
-            },
-            shape = RoundedCornerShape(16.dp),
-            containerColor = Color.White,
-            titleContentColor = Color(0xFF111827),
-            textContentColor = Color(0xFF374151)
-        )
-    }
 }
 
 // "Later" on the name prompt holds for as long as the app stays open; it asks again next launch.

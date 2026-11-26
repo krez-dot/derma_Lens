@@ -40,7 +40,7 @@ class ContributionUploadWorker(
 
             for (scan in pending) {
                 val file = File(scan.imagePath)
-                if (!file.exists()) continue // e.g. contribution was toggled off after saving
+                if (!file.exists()) continue // e.g. the photo was removed after saving
 
                 val safeCondition = scan.condition.replace(Regex("[^A-Za-z0-9]"), "_")
                 val remoteFilename = "${safeCondition}_${UUID.randomUUID()}.jpg"
