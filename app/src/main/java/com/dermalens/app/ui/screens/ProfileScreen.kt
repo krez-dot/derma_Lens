@@ -61,7 +61,7 @@ fun ProfileScreen(navController: NavController) {
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showPrivacyDialog by remember { mutableStateOf(false) }
-    var showContributeDialog by remember { mutableStateOf(false) }
+    var showTermsDialog by remember { mutableStateOf(false) }
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
     var deleteAccountPassword by remember { mutableStateOf("") }
     var deleteAccountError by remember { mutableStateOf("") }
@@ -79,7 +79,6 @@ fun ProfileScreen(navController: NavController) {
     val prefs = remember { context.getSharedPreferences(DermaPrefs.PREFS_NAME, android.content.Context.MODE_PRIVATE) }
     var fontScale by remember { mutableStateOf(prefs.getFloat(DermaPrefs.KEY_FONT_SIZE, 1.0f)) }
     var highContrast by remember { mutableStateOf(prefs.getBoolean(DermaPrefs.KEY_HIGH_CONTRAST, false)) }
-    var contributeData by remember { mutableStateOf(prefs.getBoolean(DermaPrefs.KEY_CONTRIBUTE_DATA, false)) }
     var notificationsEnabled by remember { mutableStateOf(prefs.getBoolean(DermaPrefs.KEY_NOTIFICATIONS_ENABLED, true)) }
     var reminderHour by remember { mutableStateOf(com.dermalens.app.worker.NotificationScheduler.reminderHour(context)) }
     var reminderMinute by remember { mutableStateOf(com.dermalens.app.worker.NotificationScheduler.reminderMinute(context)) }
@@ -218,16 +217,6 @@ fun ProfileScreen(navController: NavController) {
                     ProfileMenuItem(icon = Icons.Default.Schedule, iconBg = Color(0xFFEFF6FF), iconTint = Color(0xFF2563EB), title = "Reminder Time", subtitle = formatReminderTime(context, reminderHour, reminderMinute), onClick = { showTimePicker = true })
                 }
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
-                ProfileMenuItemSwitch(icon = Icons.Default.Science, iconBg = Color(0xFFF5F3FF), iconTint = Color(0xFF7C3AED), title = "Contribute to Research", subtitle = if (contributeData) "Your scans help improve DermaLens" else "Help us improve for Filipino skin tones", checked = contributeData, onCheckedChange = {
-                    if (it) {
-                        showContributeDialog = true
-                    } else {
-                        contributeData = false
-                        prefs.edit().putBoolean(DermaPrefs.KEY_CONTRIBUTE_DATA, false).apply()
-                        com.dermalens.app.worker.ContributionUploadScheduler.cancelUpload(context)
-                    }
-                })
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
                 // Opt-in only, behind its own consent dialog: scan records are health information
                 // (sensitive personal information under RA 10173), so they never leave the phone
                 // unless the user explicitly turns this on. Photos are never uploaded either way.
@@ -244,11 +233,9 @@ fun ProfileScreen(navController: NavController) {
             ProfileSectionHeader("App")
             Spacer(modifier = Modifier.height(8.dp))
             ProfileMenuCard {
-                // Was "Scan History" -- the only place in the app that called this screen
-                // anything other than "Progress" (bottom nav tab, Home's Quick Actions card, and
-                // the screen's own header all say "Progress"/"Progress Tracker"). Same
-                // destination, so the label should match instead of implying a different screen.
-                ProfileMenuItem(icon = Icons.Default.History, iconBg = Color(0xFFF5F3FF), iconTint = Color(0xFF7C3AED), title = "Progress", subtitle = "View all your past scans", onClick = { navController.navigate(Screen.ProgressTracker.route) })
+                ProfileMenuItem(icon = Icons.Default.History, iconBg = Color(0xFFF5F3FF), iconTint = Color(0xFF7C3AED), title = "Self Monitoring", subtitle = "Your scans and how each spot is changing", onClick = { navController.navigate(Screen.ProgressTracker.route) })
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
+                ProfileMenuItem(icon = Icons.Default.Insights, iconBg = Color(0xFFF5F3FF), iconTint = Color(0xFF7C3AED), title = "Insights", subtitle = "Patterns in your scan history", onClick = { navController.navigate(Screen.Insights.route) })
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
                 ProfileMenuItem(icon = Icons.Default.LocationOn, iconBg = Color(0xFFF0FDF4), iconTint = DermaSuccess, title = "Find Clinics", subtitle = "Locate nearby dermatologists", onClick = { navController.navigate(Screen.ClinicLocator.route) })
             }
@@ -264,6 +251,9 @@ fun ProfileScreen(navController: NavController) {
                 ProfileMenuItem(icon = Icons.Default.Info, iconBg = Color(0xFFEFF6FF), iconTint = Color(0xFF2563EB), title = "About DermaLens", subtitle = "Version ${com.dermalens.app.BuildConfig.VERSION_NAME} — Capstone 2026", onClick = { showAboutDialog = true })
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
                 ProfileMenuItem(icon = Icons.Default.Shield, iconBg = Color(0xFFF0FDF4), iconTint = DermaSuccess, title = "Privacy Policy", subtitle = "How we handle your data", onClick = { showPrivacyDialog = true })
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = if (settings.highContrast) Color(0xFFD1D5DB) else Color(0xFFF3F4F6))
+                // Research contribution lives here now (a Terms clause), not as an on/off switch.
+                ProfileMenuItem(icon = Icons.Default.Gavel, iconBg = Color(0xFFF5F3FF), iconTint = Color(0xFF7C3AED), title = "Terms and Conditions", subtitle = "Includes how your scans help research", onClick = { showTermsDialog = true })
             }
             } }
 
@@ -644,41 +634,7 @@ fun ProfileScreen(navController: NavController) {
         )
     }
 
-    // Contribute to Research Dialog
-    if (showContributeDialog) {
-        DermaAlertDialog(
-            onDismissRequest = { showContributeDialog = false },
-            icon = { Icon(Icons.Default.Science, contentDescription = null, tint = Color(0xFF7C3AED)) },
-            title = { Text("Contribute to Research", fontWeight = FontWeight.Bold, fontSize = settings.textXl.sp, color = Color(0xFF111827)) },
-            text = {
-                Text(
-                    "When enabled, your skin scan images and results will be added to the DermaLens research dataset. This data helps train and improve future versions of the AI model, especially for detecting conditions across a wider range of Filipino skin tones.\n\nYour scans are contributed anonymously and are never linked to your name or account. You can turn this off at any time.",
-                    fontSize = settings.textMd.sp,
-                    color = Color(0xFF374151),
-                    lineHeight = 20.sp
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        contributeData = true
-                        prefs.edit().putBoolean(DermaPrefs.KEY_CONTRIBUTE_DATA, true).apply()
-                        com.dermalens.app.worker.ContributionUploadScheduler.scheduleUpload(context)
-                        showContributeDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED)),
-                    shape = RoundedCornerShape(50)
-                ) { Text("Allow", fontSize = settings.textMd.sp) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showContributeDialog = false }) { Text("Not Now", fontSize = settings.textMd.sp) }
-            },
-            shape = RoundedCornerShape(16.dp),
-            containerColor = Color.White,
-            titleContentColor = Color(0xFF111827),
-            textContentColor = Color(0xFF374151)
-        )
-    }
+    if (showTermsDialog) TermsDialog(onDismiss = { showTermsDialog = false })
 
     // Back Up Scan History -- consent dialog (turning ON)
     if (showBackupOnDialog) {
@@ -688,7 +644,7 @@ fun ProfileScreen(navController: NavController) {
             title = { Text("Back Up Scan History?", fontWeight = FontWeight.Bold, fontSize = settings.textXl.sp, color = Color(0xFF111827)) },
             text = {
                 Text(
-                    "Your scan records (detected condition, confidence, date, and your notes) will be copied to secure cloud storage (Google Firebase) linked to your account, so they come back if you log in on another phone.\n\n" +
+                    "Your scan records (detected condition, confidence, date, your notes, and your pre-scan answers) will be copied to secure cloud storage (Google Firebase) linked to your account, so they come back if you log in on another phone.\n\n" +
                         "Your photos are NOT uploaded. They stay only on the phone that took them.\n\n" +
                         "This is health information. Only you can access it, and turning backup off deletes the cloud copy.",
                     fontSize = settings.textMd.sp,
@@ -778,10 +734,10 @@ fun ProfileScreen(navController: NavController) {
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text("Effective Date: January 1, 2026", fontSize = settings.textSm.sp, color = DermaSubtle)
-                    PrivacySection("1. Information We Collect", "DermaLens collects the following data to provide its services:\n\n• Profile information you provide (full name, email address)\n• Skin scan results including detected condition and confidence score\n• Scan history and timestamps stored locally on your device (and, only if you turn on Back Up Scan History, in the cloud without photos)\n• Device location (GPS) used only to find nearby dermatology clinics")
-                    PrivacySection("2. How We Use Your Data", "All data collected by DermaLens is used solely to:\n\n• Display your scan history and progress over time\n• Personalize your in-app experience\n• Help locate nearby dermatology clinics based on your location\n• Send optional daily scan reminder notifications")
-                    PrivacySection("3. Data Storage", "All personal data and scan records are stored locally on your device using a secure Room database, including a saved copy of each scan's photo so you can review your progress over time. Your account's email address and verification status are managed by Google Firebase Authentication.\n\nIf you turn on Back Up Scan History (Profile > Account), your scan records (condition, confidence, date, and notes) are also stored in Google Firebase, accessible only to your account, so they can be restored on another phone. Scan photos are never included in this backup. Turning backup off, or deleting your account, deletes the cloud copy.\n\nScan images leave your device only if you separately opt in to Contribute to Research, and then anonymously.")
-                    PrivacySection("4. Camera & Gallery Access", "Camera and gallery access is used exclusively to capture or select skin images for AI analysis. Images are processed on-device and saved locally with your scan history. They are never shared with third parties, and are only uploaded if you opt in to Contribute to Research.")
+                    PrivacySection("1. Information We Collect", "DermaLens collects the following data to provide its services:\n\n• Profile information you provide (full name, email address)\n• Skin scan results including detected condition and confidence score\n• Your answers to the short questions asked before each scan (body area, duration, itch, pain, possible triggers)\n• Scan history and timestamps stored locally on your device (and, only if you turn on Back Up Scan History, in the cloud without photos)\n• Device location (GPS) used only to find nearby dermatology clinics")
+                    PrivacySection("2. How We Use Your Data", "All data collected by DermaLens is used solely to:\n\n• Display your scan history, Self Monitoring and Insights\n• Improve the detection model through the anonymous research contribution described in the Terms and Conditions\n• Personalize your in-app experience\n• Help locate nearby dermatology clinics based on your location\n• Send optional daily scan reminder notifications")
+                    PrivacySection("3. Data Storage", "All personal data and scan records are stored locally on your device using a secure Room database, including a saved copy of each scan's photo so you can review your progress over time. Your account's email address and verification status are managed by Google Firebase Authentication.\n\nIf you turn on Back Up Scan History (Profile > Account), your scan records (condition, confidence, date, notes and pre-scan answers) are also stored in Google Firebase, accessible only to your account, so they can be restored on another phone. Scan photos are never included in this backup. Turning backup off, or deleting your account, deletes the cloud copy.\n\nThe photo of each saved scan that detects a condition is uploaded anonymously for research, as described in the Terms and Conditions (section 5). Nothing that identifies you is sent with it.")
+                    PrivacySection("4. Camera & Gallery Access", "Camera and gallery access is used exclusively to capture or select skin images for AI analysis. Images are processed on-device and saved locally with your scan history. They are never shared with third parties. Saved scan photos are uploaded anonymously for research, as described in the Terms and Conditions.")
                     PrivacySection("5. Location Access", "Location is accessed only when you use the Clinic Locator feature to find nearby dermatology clinics. Location data is not stored or logged.")
                     PrivacySection("6. AI Disclaimer", "DermaLens uses an on-device AI model (YOLOv11 TFLite) for skin condition detection. Results are for reference only and do not constitute medical advice. Always consult a dermatologist for diagnosis and treatment.")
                     PrivacySection("7. Contact", "DermaLens is a capstone project developed at Tarlac State University, 2026. For questions or concerns, please contact the development team through your institution.")

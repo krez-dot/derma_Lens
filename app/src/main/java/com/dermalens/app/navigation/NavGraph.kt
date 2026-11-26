@@ -27,17 +27,23 @@ sealed class Screen(val route: String) {
         // continue that specific trend regardless of what this new scan classifies as.
         fun createRoute(continueGroupId: Int = -1) = "scan?continueGroupId=$continueGroupId"
     }
-    object ScanResult : Screen("scan_result?imageUri={imageUri}&scanId={scanId}&continueGroupId={continueGroupId}") {
+    object ScanResult : Screen("scan_result?imageUri={imageUri}&scanId={scanId}&continueGroupId={continueGroupId}&checkIn={checkIn}") {
         // scanId defaults to -1 ("not viewing history") so the two existing call sites (a fresh
         // scan from CameraScreen, which only ever passes imageUri) don't need to change at all.
         // Passing a real scanId (from Progress Tracker) tells ScanResultScreen to load that
         // saved record instead of running a brand new inference on the image. continueGroupId
         // just carries Scan's own value forward so it's still known at the point where saving
         // actually happens -- see saveScan().
-        fun createRoute(imageUri: String?, scanId: Int = -1, continueGroupId: Int = -1) =
-            "scan_result?imageUri=${imageUri?.let { android.net.Uri.encode(it) } ?: ""}&scanId=$scanId&continueGroupId=$continueGroupId"
+        // checkIn is the encoded pre-scan answers (SymptomCheckIn.encode), saved with the scan.
+        fun createRoute(imageUri: String?, scanId: Int = -1, continueGroupId: Int = -1, checkIn: String? = null) =
+            "scan_result?imageUri=${imageUri?.let { android.net.Uri.encode(it) } ?: ""}&scanId=$scanId&continueGroupId=$continueGroupId&checkIn=${checkIn?.let { android.net.Uri.encode(it) } ?: ""}"
     }
+    // Shown to the user as "Self Monitoring"; the route keeps its old name.
     object ProgressTracker : Screen("progress_tracker")
+    object Insights : Screen("insights")
+    // Terms and Conditions gate for someone already signed in who hasn't accepted the current
+    // version (e.g. updated from a build that had no Terms). New sign-ins see it on Login.
+    object Terms : Screen("terms")
     object FamilyTree : Screen("family_tree/{condition}") {
         fun createRoute(condition: String) = "family_tree/${android.net.Uri.encode(condition)}"
     }
@@ -108,6 +114,11 @@ fun DermaLensNavGraph(
                 navArgument("continueGroupId") {
                     type = NavType.IntType
                     defaultValue = -1
+                },
+                navArgument("checkIn") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
                 }
             )
         ) { backStackEntry ->
@@ -115,11 +126,18 @@ fun DermaLensNavGraph(
                 navController = navController,
                 imageUri = backStackEntry.arguments?.getString("imageUri"),
                 scanId = backStackEntry.arguments?.getInt("scanId") ?: -1,
-                continueGroupId = backStackEntry.arguments?.getInt("continueGroupId") ?: -1
+                continueGroupId = backStackEntry.arguments?.getInt("continueGroupId") ?: -1,
+                checkIn = SymptomCheckIn.decode(backStackEntry.arguments?.getString("checkIn"))
             )
         }
         composable(Screen.ProgressTracker.route) {
             ProgressTrackerScreen(navController = navController)
+        }
+        composable(Screen.Insights.route) {
+            InsightsScreen(navController = navController)
+        }
+        composable(Screen.Terms.route) {
+            TermsScreen(navController = navController)
         }
         composable(
             Screen.FamilyTree.route,

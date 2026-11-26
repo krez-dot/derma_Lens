@@ -324,14 +324,30 @@ private suspend fun fetchNearbyClinics(context: Context, lat: Double, lng: Doubl
     }
 }
 
+// SHA-1 of the certificate this APK is actually signed with (no colons -- the format the
+// X-Android-Cert header expects). Read at runtime instead of hardcoded, so a build from any PC's
+// debug keystore or a release key works, as long as that SHA-1 is on the API key's Android
+// restriction in Google Cloud Console.
+@Suppress("DEPRECATION")
+private fun signingCertSha1(context: Context): String = try {
+    val pm = context.packageManager
+    val signature = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+        pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES)
+            .signingInfo?.apkContentsSigners?.firstOrNull()
+    } else {
+        pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SIGNATURES).signatures?.firstOrNull()
+    }
+    signature?.let { sig ->
+        java.security.MessageDigest.getInstance("SHA-1").digest(sig.toByteArray()).joinToString("") { "%02X".format(it) }
+    } ?: ""
+} catch (e: Exception) {
+    ""
+}
+
 /** Runs a Places API (New) Text Search biased to the user's location, returning its "places"
  *  entries, or an empty list on any failure/timeout. Text Search (rather than Nearby Search,
  *  which only filters by fixed place types) is what lets "dermatology clinic" match by name and
  *  category the way the previous Overpass healthcare-speciality tag search did. */
-// Same SHA-1 used for the API key's Android app restriction in Google Cloud Console, but without
-// colons -- that's the format the X-Android-Cert header expects.
-private const val ANDROID_CERT_SHA1 = "0F0F3D55E975E6572B6FD1B4C53079D2B7E6ECEF"
-
 private fun runPlacesTextSearch(context: Context, lat: Double, lng: Double): List<org.json.JSONObject> {
     return try {
         val body = org.json.JSONObject().apply {
@@ -364,7 +380,7 @@ private fun runPlacesTextSearch(context: Context, lat: Double, lng: Double): Lis
             // itself, or Google sees no app identity at all and blocks the request outright
             // (confirmed via logcat: "API_KEY_ANDROID_APP_BLOCKED", androidPackage: "<empty>").
             setRequestProperty("X-Android-Package", context.packageName)
-            setRequestProperty("X-Android-Cert", ANDROID_CERT_SHA1)
+            setRequestProperty("X-Android-Cert", signingCertSha1(context))
             outputStream.use { it.write(body.toString().toByteArray()) }
         }
         if (conn.responseCode !in 200..299) {
@@ -466,7 +482,7 @@ private suspend fun fetchRoute(context: Context, fromLat: Double, fromLng: Doubl
                 // costs nothing extra over what was already being called.
                 setRequestProperty("X-Goog-FieldMask", "routes.polyline.encodedPolyline,routes.duration,routes.distanceMeters")
                 setRequestProperty("X-Android-Package", context.packageName)
-                setRequestProperty("X-Android-Cert", ANDROID_CERT_SHA1)
+                setRequestProperty("X-Android-Cert", signingCertSha1(context))
                 outputStream.use { it.write(body.toString().toByteArray()) }
             }
             if (conn.responseCode !in 200..299) {

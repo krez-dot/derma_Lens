@@ -8,6 +8,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.dermalens.app.data.model.BoundingBox
 import com.dermalens.app.data.model.ScanRecord
+import com.dermalens.app.data.model.ScanTrigger
 import com.dermalens.app.data.model.TrackGroup
 import com.dermalens.app.data.model.User
 
@@ -122,7 +123,21 @@ private val MIGRATION_10_11 = object : Migration(10, 11) {
     }
 }
 
-@Database(entities = [User::class, TrackGroup::class, ScanRecord::class, BoundingBox::class], version = 11, exportSchema = true)
+// v12 adds the pre-scan check-in: five answer columns on scan_records and a scan_triggers table.
+// Existing scans keep everything and read as "not answered" (blank / -1).
+private val MIGRATION_11_12 = object : Migration(11, 12) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE scan_records ADD COLUMN bodyArea TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE scan_records ADD COLUMN duration TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE scan_records ADD COLUMN itchLevel INTEGER NOT NULL DEFAULT -1")
+        db.execSQL("ALTER TABLE scan_records ADD COLUMN painLevel INTEGER NOT NULL DEFAULT -1")
+        db.execSQL("ALTER TABLE scan_records ADD COLUMN feelsVsLast TEXT NOT NULL DEFAULT ''")
+        db.execSQL("CREATE TABLE IF NOT EXISTS `scan_triggers` (`triggerId` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `scanId` INTEGER NOT NULL, `triggerName` TEXT NOT NULL, FOREIGN KEY(`scanId`) REFERENCES `scan_records`(`scanId`) ON UPDATE NO ACTION ON DELETE CASCADE )")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_scan_triggers_scanId` ON `scan_triggers` (`scanId`)")
+    }
+}
+
+@Database(entities = [User::class, TrackGroup::class, ScanRecord::class, BoundingBox::class, ScanTrigger::class], version = 12, exportSchema = true)
 abstract class DermaDatabase : RoomDatabase() {
     abstract fun userDao(): UserDao
     abstract fun scanRecordDao(): ScanRecordDao
@@ -148,7 +163,7 @@ abstract class DermaDatabase : RoomDatabase() {
                     // build-time-visible failure that forces a real migration to be written,
                     // rather than a silent data-loss bug nobody notices until support tickets show up.
                     .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6)
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
                     .build()
                 INSTANCE = instance
                 instance

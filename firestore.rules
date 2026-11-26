@@ -10,7 +10,9 @@ rules_version = '2';
 //    and writable ONLY by the account that owns them. Never photos.
 //    users/{uid}                    { syncEnabled, updatedAt }
 //    users/{uid}/scans/{scanDate}   { condition, confidence, notes, scanDate,
-//                                     groupKey, deleted, updatedAt }   (tombstone: deleted=true)
+//                                     groupKey, deleted, updatedAt,
+//                                     bodyArea, duration, itchLevel, painLevel, feelsVsLast,
+//                                     triggers }   (tombstone: deleted=true)
 //    (severity: app 1.2.0 stopped sending it; still accepted, optional, from 1.1.0 installs)
 //    users/{uid}/clinicVotes/{placeId} { votedAt }   -- which clinics this account voted on,
 //                                                      so Delete Account can withdraw them
@@ -136,13 +138,26 @@ service cloud.firestore {
           && (request.resource.data.deleted == true
                 ? request.resource.data.keys().hasOnly(['scanDate', 'deleted', 'updatedAt'])
                 : (request.resource.data.keys().hasOnly(['condition', 'confidence', 'severity', 'notes',
-                                                          'scanDate', 'groupKey', 'deleted', 'updatedAt'])
+                                                          'scanDate', 'groupKey', 'deleted', 'updatedAt',
+                                                          'bodyArea', 'duration', 'itchLevel', 'painLevel',
+                                                          'feelsVsLast', 'triggers'])
                    && request.resource.data.condition is string
                    && request.resource.data.confidence is number
                    && request.resource.data.get('severity', '') is string
                    && request.resource.data.notes is string
                    && request.resource.data.notes.size() <= 2000
-                   && request.resource.data.groupKey is int));
+                   && request.resource.data.groupKey is int
+                   // Pre-scan check-in (app 1.3.0+); optional so older installs still back up.
+                   && request.resource.data.get('bodyArea', '') is string
+                   && request.resource.data.get('bodyArea', '').size() <= 50
+                   && request.resource.data.get('duration', '') is string
+                   && request.resource.data.get('duration', '').size() <= 50
+                   && request.resource.data.get('itchLevel', -1) is int
+                   && request.resource.data.get('painLevel', -1) is int
+                   && request.resource.data.get('feelsVsLast', '') is string
+                   && request.resource.data.get('feelsVsLast', '').size() <= 50
+                   && request.resource.data.get('triggers', []) is list
+                   && request.resource.data.get('triggers', []).size() <= 10));
       }
     }
   }

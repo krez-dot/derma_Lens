@@ -135,9 +135,6 @@ internal suspend fun getGoogleAuthCredential(context: android.content.Context): 
 private suspend fun signInWithGoogle(context: android.content.Context): FirebaseUser {
     val firebaseCredential = getGoogleAuthCredential(context)
     val result = FirebaseAuth.getInstance().signInWithCredential(firebaseCredential).awaitTask()
-    // A brand-new account gets the Contribute to Research prompt on Home, the same one an email
-    // sign-up gets after verifying. Returning Google users don't see it again.
-    if (result.additionalUserInfo?.isNewUser == true) NewUserSignal.pendingContributePrompt = true
     return result.user ?: throw IllegalStateException("Google sign-in succeeded but returned no user.")
 }
 
@@ -249,6 +246,20 @@ fun LoginScreen(navController: NavController) {
     val scope = rememberCoroutineScope()
     val prefs = remember { context.getSharedPreferences(DermaPrefs.PREFS_NAME, android.content.Context.MODE_PRIVATE) }
     val settings = LocalAppSettings.current
+
+    // Terms and Conditions come first, right on the login page and shown in full (panel
+    // revision): read to the end, agree, then the sign-in form appears. Once per phone, and again
+    // whenever TermsAgreement.VERSION goes up.
+    var termsAccepted by remember { mutableStateOf(TermsAgreement.isAccepted(context)) }
+    if (!termsAccepted) {
+        var showDeclined by remember { mutableStateOf(false) }
+        TermsAgreementPanel(
+            onAgree = { TermsAgreement.accept(context); termsAccepted = true },
+            onDecline = { showDeclined = true }
+        )
+        if (showDeclined) TermsDeclinedDialog(onDismiss = { showDeclined = false })
+        return
+    }
 
     var email by remember { mutableStateOf(prefs.getString(DermaPrefs.KEY_REMEMBER_EMAIL, "") ?: "") }
     var password by remember { mutableStateOf("") }
@@ -664,8 +675,8 @@ fun RegisterScreen(navController: NavController) {
             TextButton(onClick = { showPrivacyDialog = true }, contentPadding = PaddingValues(0.dp), modifier = Modifier.align(Alignment.CenterHorizontally)) {
                 Text(
                     buildAnnotatedString {
-                        withStyle(SpanStyle(color = settings.textSecondary)) { append("By registering, you agree to our ") }
-                        withStyle(SpanStyle(color = DermaGreen, fontWeight = FontWeight.SemiBold)) { append("Privacy Policy") }
+                        withStyle(SpanStyle(color = settings.textSecondary)) { append("You agreed to the ") }
+                        withStyle(SpanStyle(color = DermaGreen, fontWeight = FontWeight.SemiBold)) { append("Terms and Conditions") }
                     },
                     fontSize = settings.textSm.sp,
                     textAlign = TextAlign.Center
@@ -676,32 +687,7 @@ fun RegisterScreen(navController: NavController) {
         }
     }
 
-    if (showPrivacyDialog) {
-        DermaAlertDialog(
-            onDismissRequest = { showPrivacyDialog = false },
-            containerColor = Color.White,
-            titleContentColor = Color(0xFF111827),
-            textContentColor = Color(0xFF374151),
-            shape = RoundedCornerShape(28.dp),
-            title = { Text("Privacy Policy", fontWeight = FontWeight.Bold, fontSize = 18.sp) },
-            text = {
-                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    PrivacySection("Data We Collect", "We collect your name, email address, and skin scan images you choose to submit. Scan results including condition and confidence scores are stored locally on your device.")
-                    PrivacySection("How We Use Your Data", "Your data is used solely to provide personalized skin health tracking within the app. If you enable 'Contribute to Research', anonymized scan data may be used to improve our detection model.")
-                    PrivacySection("Data Storage", "Scan history, results, and app preferences are stored locally on your device. Your email and password are managed by Firebase Authentication (Google's infrastructure) for account verification and sign-in -- your password is never visible to us in plain text. We do not sell, rent, or share your personal information with third parties.")
-                    PrivacySection("Research Contributions", "Contribution is entirely opt-in. You may toggle this off at any time in Profile > Contribute to Research. If enabled, contributed images are uploaded to secure cloud storage over Wi-Fi for use in improving the detection model -- the upload is anonymous and contains no name, email, or account information, only the image and its detected condition.")
-                    PrivacySection("Your Rights", "You may delete your account and all associated data at any time. Scan records can be individually deleted from the Progress Tracker.")
-                    PrivacySection("Medical Disclaimer", "DermaLens is for informational reference only and does not constitute medical advice. Always consult a dermatologist for diagnosis and treatment.")
-                    PrivacySection("Contact", "For privacy concerns, contact us through the app's feedback channel.")
-                }
-            },
-            confirmButton = {
-                Button(onClick = { showPrivacyDialog = false }) {
-                    Text("Close", fontWeight = FontWeight.SemiBold)
-                }
-            }
-        )
-    }
+    if (showPrivacyDialog) TermsDialog(onDismiss = { showPrivacyDialog = false })
 }
 
 @Composable
@@ -761,7 +747,6 @@ fun VerifyEmailScreen(navController: NavController) {
                                     putString(DermaPrefs.KEY_USER_EMAIL, firebaseUser.email ?: "")
                                     apply()
                                 }
-                                NewUserSignal.pendingContributePrompt = true
                                 // Firestore rules require email_verified, but the cached ID token
                                 // still says false until it refreshes (up to an hour) -- force a
                                 // fresh one first so votes and backup work right away.
